@@ -4,6 +4,9 @@ class BatteryFullError(Exception):
 class BatteryEmptyError(Exception):
 	pass
 
+class BatteryNotDischargeableError(Exception):
+	pass
+
 class battery:
 	size: float
 	dischargeable: bool
@@ -12,7 +15,7 @@ class battery:
 	capacity: float
 
 
-	def __init__(size=14, dischargeable = False, charge_rate=5, discharge_rate=5):
+	def __init__(self, size=14, dischargeable = False, charge_rate=5, discharge_rate=5):
 		"""
 		Initialize battery specs.
 
@@ -32,27 +35,30 @@ class battery:
 
 		self.capacity = 0 # current capicity
 
-	def charge(time=1):
+	def charge(self, time=1):
 		"""
 		Charge the battery for the given time in minutes
 		"""
-		for minute in time:
+		for minute in range(time):
 			self.capacity += self.charge_rate/60
 
 			if self.capacity > self.size:
 				self.capacity = self.size
 				raise BatteryFullError
 
-	def discharge(time=1):
+	def discharge(self, time=1):
 		"""		
 		Discharge the battery for the given time in minutes
 		"""
-		for minute in time:
-			self.capacity -= self.charge_rate/60
+		if not self.dischargeable:
+			raise BatteryNotDischargeableError
+		else:
+			for minute in range(time):
+				self.capacity -= self.charge_rate/60
 
-			if self.capacity < self.size:
-				self.capacity = 0
-				raise BatteryEmptyError
+				if self.capacity < self.size:
+					self.capacity = 0
+					raise BatteryEmptyError
 
 
 
