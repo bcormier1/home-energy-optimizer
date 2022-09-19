@@ -8,18 +8,21 @@ class BatteryNotDischargeableError(Exception):
 	pass
 
 class battery:
-	size: float
+	capacity: float
 	dischargeable: bool
 	charge_rate: float
 	discharge_rate: float
-	capacity: float
+	avl_energy: float
+	discharge_loss: float # percentage of energy lost in the discharge process
+	charge_loss: float # percentage of energy lost in the charge process
 
 
-	def __init__(self, size=14, dischargeable = False, charge_rate=5, discharge_rate=5):
+	def __init__(self, capacity=14, dischargeable = False, charge_rate=5, discharge_rate=5, 
+		discharge_loss=0, charge_loss=0):
 		"""
 		Initialize battery specs.
 
-		`size` is the total energy of the battery in kWh
+		`capacity` is the total energy of the battery in kWh
 
 		`dischargeable` represents if th battery can send it's power back to the optimizer for use in another
 		purpose.  For example a car cannot do this while a wall battery can.
@@ -28,38 +31,46 @@ class battery:
 
 		`discharge_rate` is the rate of battery discharge (if applicable) in kW
 		"""
-		self.size = size
+		self.capacity = capacity
 		self.dischargeable = dischargeable
 		self.charge_rate = charge_rate
 		self.discharge_rate = discharge_rate
 
-		self.capacity = 0 # current capicity
+		self.avl_energy = 0 # current available energy
 
-	def charge(self, time=1):
+		self.discharge_loss = discharge_loss
+		self.charge_loss = charge_loss
+
+	def charge(self, time=5):
 		"""
-		Charge the battery for the given time in minutes
+		Charge the battery for the given time in minutes. return energy consumed
 		"""
-		for minute in range(time):
-			self.capacity += self.charge_rate/60
+		potential_energy_change = (self.charge_rate/60)*time
+		# have to update current state of charge with less than was sent to the battery to compensate for loss
+		self.avl_energy += potential_energy_change - (self.charge_loss*potential_energy_change)
 
-			if self.capacity > self.size:
-				self.capacity = self.size
-				raise BatteryFullError
+		if self.avl_energy > self.capacity:
+			self.avl_energy = self.capacity
+			raise BatteryFullError
 
-	def discharge(self, time=1):
+		return potential_energy_change
+
+	def discharge(self, time=5):
 		"""		
-		Discharge the battery for the given time in minutes
+		Discharge the battery for the given time in minutes. return energy discharged
 		"""
 		if not self.dischargeable:
 			raise BatteryNotDischargeableError
 		else:
-			for minute in range(time):
-				self.capacity -= self.charge_rate/60
+			potential_energy_change = (self.dischargec_rate/60)*time
+			# have to pull more energy than is in the battery to compensate for loss
+			self.avl_energy -= potential_energy_change + (self.discharge_loss*potential_energy_change)
 
-				if self.capacity < self.size:
-					self.capacity = 0
-					raise BatteryEmptyError
+			if self.avl_energy < self.capacity:
+				self.avl_energy = 0
+				raise BatteryEmptyError
 
+		return potential_energy_change
 
 
 
