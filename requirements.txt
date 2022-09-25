@@ -12,7 +12,7 @@ charset-normalizer==2.1.1
 debugpy==1.6.3
 decorator==5.1.1
 defusedxml==0.7.1
-entrypoints==0.4
+entrypoints==0.3
 executing==1.0.0
 fastjsonschema==2.16.2
 idna==3.4
@@ -72,3 +72,4 @@ urllib3==1.26.12
 wcwidth==0.2.5
 webencodings==0.5.1
 widgetsnbextension==4.0.3
+fastparquet
