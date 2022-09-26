@@ -7,6 +7,9 @@ class BatteryEmptyError(Exception):
 class BatteryOverflowError(Exception):
     pass
 
+class BatteryOverdrawError(Exception):
+    pass
+
 class BatteryNotDischargeableError(Exception):
     pass
 
@@ -98,7 +101,7 @@ class battery:
             self.avl_energy += net_input
             self.update_capacity_degredation(net_input)
             
-            #return net_input, self.avl_energy
+        #return net_input, input_energy, self.avl_energy
         
 
     def discharge(self, time=5):
@@ -129,7 +132,7 @@ class battery:
         available_capacity = self.get_discharge_potential()
         
         if output_energy > available_capacity:
-            raise BatteryEmptyError
+            raise BatteryOverdrawError
         else:
             # Calculate the full amout required to be extracted including losses
             full_decrement = output_energy / self.discharge_loss
@@ -138,7 +141,7 @@ class battery:
             self.avl_energy -= full_decrement
             self.update_capacity_degredation(full_decrement)
             
-            #return full_decrement, self.avl_energy
+        #return output_energy, full_decrement, self.avl_energy 
     
     def update_capacity_degredation(self, energy):
         
