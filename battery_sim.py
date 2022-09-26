@@ -13,16 +13,20 @@ class battery:
 	charge_rate: float
 	discharge_rate: float
 	avl_energy: float
-	discharge_loss: float # percentage of energy lost in the discharge process
+## AT: not sure if these two now need to be listed here seeing as they are not attributes and not inputs. 
+    discharge_loss: float # percentage of energy lost in the discharge process
 	charge_loss: float # percentage of energy lost in the charge process
+##
+	round_trip_efficiency: float # Percentage of energy recoverable from each unit of input energy
 
 
 	def __init__(self, capacity=14, dischargeable = False, charge_rate=5, discharge_rate=5, 
-		discharge_loss=0, charge_loss=0):
+		round_trip_efficiency=0.9):
 		"""
 		Initialize battery specs.
 
-		`capacity` is the total energy of the battery in kWh
+		`max capacity` is the starting energy capacity of the battery, before any degredation mechanisms in kWh. It is decrememented per trip.
+		`capacity` is the total current energy of the battery in kWh        
 
 		`dischargeable` represents if th battery can send it's power back to the optimizer for use in another
 		purpose.  For example a car cannot do this while a wall battery can.
@@ -30,16 +34,34 @@ class battery:
 		`charge_rate` is the rate of battery charging in kW
 
 		`discharge_rate` is the rate of battery discharge (if applicable) in kW
+        
+        `total_energy_flow` is the highest allowable charge/dischare rate in kW
+        
+        `trip_count` is the total number of full cycles (Charge and discharge) of the battery. 
+        
+        `capacity_degredation_rate` is the rate at which the capacity is decrememnted per trip in kWh/trip
+        
+        `previous_trip_count` starting counter for the trip count.
+        
 		"""
+		self.max_capacity = capacity
+        
 		self.capacity = capacity
 		self.dischargeable = dischargeable
 		self.charge_rate = charge_rate
 		self.discharge_rate = discharge_rate
 
-		self.avl_energy = 0 # current available energy
+        # Variables used for capacity decrementing
+        self.total_energy_flow = 0
+        self.trip_count = 0
+        self.capacity_degredation_rate = 0.00025 # kWh/trip for Tesla Powerwall 2
+        self.previous_trip_count = 0
 
-		self.discharge_loss = discharge_loss
-		self.charge_loss = charge_loss
+		self.avl_energy = 0 # current available energy
+        
+        # Assume same rate for charge and discharge. 
+		self.discharge_loss = round_trip_efficiency ** 0.5
+		self.charge_loss = round_trip_efficiency ** 0.5
 
 	def charge(self, time=5):
 		"""
@@ -71,6 +93,32 @@ class battery:
 				raise BatteryEmptyError
 
 		return potential_energy_change
+    
+    def update_capacity_degredation(self, energy):
+        
+        """
+        Simulates the reduction in maximum battery capacity as a result of use.
+        In this case a degredation is a function of the number of 
+        'round trips' (discharge/charge flow equivalent to 2x the maximum capacity.
+        Models a linear decrease vs number of trips.
+        
+        inputs:
+            energy(float): the energy either charged or discharged by the battery in kWh
+        """
+        
+        # Update total energy flow aggregator
+        self.total_energy_flow += abs(energy)
+        
+        # Convert total energy flow into a count of the number of round trips
+        self.trip_count = self.total_energy_flow // (self.max_capacity * 2)
+        
+        if self.trip_count > self.previous_trip_count:
+            
+            # Decrement total capacity
+            self.max_capacity -= self.capacity_degredation_rate
+        
+        # Update previous_trip_count
+        self.trip_count = self.previous_trip_count
 
 
 
