@@ -19,14 +19,12 @@ class battery:
 ##
 	round_trip_efficiency: float # Percentage of energy recoverable from each unit of input energy
 
-
 	def __init__(self, capacity=14, dischargeable = False, charge_rate=5, discharge_rate=5, 
 		round_trip_efficiency=0.9):
 		"""
 		Initialize battery specs.
 
-		`max capacity` is the starting energy capacity of the battery, before any degredation mechanisms in kWh. It is decrememented per trip.
-		`capacity` is the total current energy of the battery in kWh        
+		`capacity` is the total current energy capacity of the battery in kWh        
 
 		`dischargeable` represents if th battery can send it's power back to the optimizer for use in another
 		purpose.  For example a car cannot do this while a wall battery can.
@@ -43,19 +41,32 @@ class battery:
         
         `previous_trip_count` starting counter for the trip count.
         
+        `interval` is the action interval in minutes. calc
+        
 		"""
-		self.max_capacity = capacity
         
 		self.capacity = capacity
 		self.dischargeable = dischargeable
 		self.charge_rate = charge_rate
 		self.discharge_rate = discharge_rate
+        
+        # AT: defined seperately here so as to not confuse with your current usage above. 
+        # depending how we set it up these may not always be the same.
+		self.max_charge_rate = 5 # in kW from the tesla datasheet
+		self.max_discharge_rate = 5 # in kW from the tesla datasheet
 
         # Variables used for capacity decrementing
         self.total_energy_flow = 0
         self.trip_count = 0
         self.capacity_degredation_rate = 0.00025 # kWh/trip for Tesla Powerwall 2
         self.previous_trip_count = 0
+        
+        # Potential variable for simultion with fixed time intervals
+        self.interval = 5 # Action interval length in minutes
+        
+        # Define the max input/output energy for the given interval
+        self.max_input = self.max_charge_rate / 60 * self.interval
+        self.max_output = self.max_discharge_rate / 60 * self.interval
 
 		self.avl_energy = 0 # current available energy
         
@@ -110,15 +121,45 @@ class battery:
         self.total_energy_flow += abs(energy)
         
         # Convert total energy flow into a count of the number of round trips
-        self.trip_count = self.total_energy_flow // (self.max_capacity * 2)
+        self.trip_count = self.total_energy_flow // (self.capacity * 2)
         
         if self.trip_count > self.previous_trip_count:
             
             # Decrement total capacity
-            self.max_capacity -= self.capacity_degredation_rate
+            self.capacity -= self.capacity_degredation_rate
         
         # Update previous_trip_count
         self.trip_count = self.previous_trip_count
+        
+    def get_charge_potential(self):
+        
+        """
+        returns the maximum allowable input into the battery in kWh
+        over a given time interval.
+        """
+        
+        charge_potential = (self.capacity - self.avl_energy) / self.charge_loss
+        
+        # Now we return the lesser of the two to prevent 'over' charging
+        if self.max_input >= charge_potential:
+            return charge_potential #limited by space available
+        else:
+            return self.max_input #Limited by discharge rate/time
+    
+    def get_discharge_potential(self):
+        
+        """
+        returns the maximum available energy output from the battery for some
+        time interval
+        """
+        
+        discharge_potential = self.avl_energy * self.discharge_loss
+        
+        if self.max_output >= discharge_potential:
+            return discharge_potential # limited by available energy
+        else:
+            return self.max_output #Limited by discharge rate/time
+       
 
 
 
