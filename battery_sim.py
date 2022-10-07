@@ -150,6 +150,7 @@ class battery:
         available_capacity = self.get_discharge_potential()
         
         if output_energy > available_capacity:
+            print(f"Output Energy: {output_energy}\nAvailable Capacity: {available_capacity}")
             raise BatteryOverdrawError
         else:
             # Calculate the full amout required to be extracted including losses
@@ -213,6 +214,9 @@ class battery:
         else:
             charge_max = self.max_input #Limited by discharge rate/time
             
+        if charge_max < 1e-16:
+            charge_max = 0
+            
         return charge_max
     
     def get_discharge_potential(self):        
@@ -238,6 +242,9 @@ class battery:
             discharge_max = discharge_potential # limited by available energy
         else:
             discharge_max = self.max_output #Limited by discharge rate/time
+            
+        if discharge_max < 1e-16:
+            discharge_max = 0
         
         return discharge_max
         
