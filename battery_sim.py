@@ -103,7 +103,7 @@ class battery:
         }
     
   
-    def charge_(self, input_energy):        
+    def charge(self, input_energy):        
         """
         Charge the battery with the given input energy amount in kWh.
         The actual amount the capacity changes is less than the input
@@ -131,7 +131,7 @@ class battery:
             
         return net_input, self.avl_energy
            
-    def discharge_(self, output_energy):
+    def discharge(self, output_energy):
         """
         Discharges energy = output_energy from the battery in kWh. 
         Decrements the capacity taking into account the discharge losses,
