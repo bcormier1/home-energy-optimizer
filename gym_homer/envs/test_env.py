@@ -9,6 +9,7 @@ from gym.utils import seeding
 
 from models.battery_simulator import battery
 
+
 class Actions(Enum):
     Charge = 0
     Discharge = 1
@@ -18,7 +19,7 @@ class HomerEnv(gym.Env):
     """Home Energy Management Environment that follows gym interface"""
     metadata = {'render_modes': ['human'], "render_fps": 4}
 
-    def __init__(self, capacity=10, start_soc='full', devices=['test_device'], 
+    def __init__(self, capacity=10, start_soc='empty', devices=['test_device'], 
                 render_mode=None, data=None, unbalanced_tariff=True) -> None:
 
         """
@@ -60,34 +61,34 @@ class HomerEnv(gym.Env):
         self.action_space = spaces.Discrete(len(Actions))
         
         ## Observation space - needs updating?
-        n_devices = len(self.devices)
-        n_regions = len(self.regions)
+        n_devices = len(self.devices) 
+        n_regions = 1
 
         self.observation_space = spaces.Dict({
-            "solar": spaces.Box(low=0, high=np.inf, shape=n_devices,
+            "solar": spaces.Box(low=-np.inf, high=0, shape=(n_devices,),
                                 dtype=np.float32),
-            "loads": spaces.Box(low=0, high=np.inf, shape=n_devices, 
+            "loads": spaces.Box(low=0, high=np.inf, shape=(n_devices,), 
                                 dtype=np.float32),
-            "soc": spaces.Box(low=0, high=np.inf, shape=n_devices, 
+            "soc": spaces.Box(low=0, high=np.inf, shape=(n_devices,), 
                                         dtype=np.float32),
             "max_discharge": spaces.Box(low=-np.inf, high=0, dtype=np.float32,
-                                        shape=n_devices), 
+                                        shape=(n_devices,)), 
             "max_charge": spaces.Box(low=0, high=np.inf, dtype=np.float32,
-                                    shape=n_devices),
-            "region": spaces.MultiBinary([n_devices, n_regions - 1]),
-            "import_tariff": spaces.Box(low=0, high=np.inf, dtype=np.float32,
-                                        shape=(n_regions,)),
-            "export_tariff": spaces.Box(low=0, high=np.inf, dtype=np.float32,
-                                        shape=(n_regions,)),
+                                    shape=(n_devices,)),
+            "region": spaces.MultiBinary(3),
+            "import_tariff": spaces.Box(low=0, high=np.inf, shape=(n_regions,),
+                                        dtype=np.float32),
+            "export_tariff": spaces.Box(low=0, high=np.inf, shape=(n_regions,),
+                                        dtype=np.float32),
             "time": spaces.Box(low=0, high=1, shape=(2,), dtype=np.float32),
-            "weekend": spaces.Discrete(2),
+            "weekend": spaces.MultiBinary(1),
             "month":spaces.Box(low=0, high=1, shape=(2,), dtype=np.float32)
         })
         
         assert render_mode is None or render_mode in self.metadata["render_modes"]
         self.render_mode = render_mode
     
-    def reset(self, seed=None, options=None) -> Tuple(Dict, Dict):
+    def reset(self, seed=None, options=None) -> Tuple[Dict, Dict]:
         """
         Resets the episode and performs the first action, which is always 
         putting the battery in standby mode. Assumed to always run before 
@@ -117,7 +118,7 @@ class HomerEnv(gym.Env):
         self._do_first_step(first_observation)
 
         # Get observation and info
-        observation = self._get_obs()      
+        observation = self._get_obs()  
         info = self._get_info()
         self._log_step(info)
 
@@ -135,23 +136,23 @@ class HomerEnv(gym.Env):
 
         # Take a step, update observation index. 
         self._current_tick += 1
-
-        obs = self._get_obs()
+        observation = self._get_obs()
 
         # Update Battery and calculate reward
         self.net, self.eflux = self._update_battery(
-            obs['solar'], obs['loads'], obs['max_discharge'], 
-            obs['max_charge'], action)
+            observation['solar'], observation['loads'], 
+            observation['max_discharge'], observation['max_charge'], action)
 
-        self.reward = self._calculate_reward(self.net, obs['export_tariff'],
-                                            obs['import_tariff'])
+        self.reward = self._calculate_reward(
+            self.net, observation['export_tariff'], 
+            observation['import_tariff'])
+
         self.episode_reward += self.reward 
 
         # Calculate whether terminated
         terminated = self._current_tick == self._end_tick
 
         # Get observation and info
-        observation = self._get_obs()
         info = self._get_info()
         self._log_step(info)
 
@@ -162,7 +163,7 @@ class HomerEnv(gym.Env):
     
     def _do_first_step(self, first_observation)-> None:
         
-        self.action = Actions.Standby
+        self.action = Actions.Standby.value
         # Calculate net
         self.net, self.e_flux = self._update_battery(
             first_observation['solar'], first_observation['loads'], 
@@ -182,21 +183,21 @@ class HomerEnv(gym.Env):
         """
         idx = self._current_tick
 
-        solar = self.solar_data[idx],
-        loads = self.loads_data[idx],
+        solar = self.solar_data[idx]
+        loads = self.loads_data[idx]
         max_d, max_c = self.battery.get_limits(solar, loads)
-        
+
         return {
-            "solar": solar, 
-            "loads": loads, 
-            "soc": self.battery.soc, 
-            "max_discharge":max_d,
-            "max_charge":max_c,
-            "region":self.region,
-            "import_tariff":self.in_tariff_data[idx],
-            "export_tariff":self.out_tariff_data[idx],
+            "solar": self.solar_data[idx:idx+1], 
+            "loads": self.loads_data[idx:idx+1], 
+            "soc": np.array([self.battery.soc], dtype=np.float32), 
+            "max_discharge":np.array([max_d], dtype=np.float32),
+            "max_charge":np.array([max_c], dtype=np.float32),
+            "region":self.region_data[idx],
+            "import_tariff":self.in_tariff_data[idx:idx+1],
+            "export_tariff":self.out_tariff_data[idx:idx+1],
             "time":self.time_data[idx],
-            "weekend":self.weekend_data[idx],
+            "weekend":self.weekend_data[idx:idx+1],
             "month": self.month_data[idx]
         }
 
@@ -221,22 +222,22 @@ class HomerEnv(gym.Env):
     def _update_battery(self, solar, loads, max_d, max_c, action
     ) -> Tuple[float,float]:
         # Calculate Grid State, Update Battery state
-        if solar > 0:
-            solar *= -1
 
         if action == Actions.Charge.value:
             net = loads + solar + max_c
-            self.batttery.charge_(max_c)
+            self.battery.charge_(max_c)
             e_flux = max_c
 
         elif action == Actions.Discharge.value:
             net = loads + solar + max_d
-            self.batttery.discharge_(abs(max_d))
+            self.battery.discharge_(abs(max_d))
             e_flux = max_d
 
         elif action == Actions.Standby.value:
             net = loads + solar
-            e_fux = 0
+            e_flux = 0
+        else:
+            raise Exception('Action not recognised!')
 
         return net, e_flux
 
@@ -248,9 +249,9 @@ class HomerEnv(gym.Env):
         elif net > 0:
             reward = net * import_tariff
         else:
-            reward = 0
+            reward = np.array([0])
 
-        return reward
+        return float(reward)
 
     def render(self, mode='human'):
 
@@ -275,11 +276,17 @@ class HomerEnv(gym.Env):
     def _process_data(self):
         
         # Get data from the dataframe
-        self.solar_data = self.data.loc[:, 'solar'].to_numpy(copy=True)
-        self.loads_data = self.data.loc[:, 'home'].to_numpy(copy=True)
-        self.in_tariff_data = self.data.loc[:, 'import_tariff'].to_numpy()
-        self.out_tariff_data = self.data.loc[:, 'export_tariff'].to_numpy()
-        self.time_data = self.data.loc[:, 'time'].to_numpy()
-        self.weekend_data = self.data.loc[:, 'weekend'].to_numpy()
-        self.month_data = self.data.lov[:, 'month'].to_numpy(copy=True)
-        self.region_data = self.df.region.unique() 
+        self.solar_data = self.df.loc[:, 'solar']\
+            .to_numpy(copy=True, dtype=np.float32)
+        self.solar_data = self.solar_data * -1 if np.max(self.solar_data) > 0 else self.solar_data
+        self.loads_data = self.df.loc[:, 'home']\
+            .to_numpy(copy=True, dtype=np.float32)
+        self.in_tariff_data = self.df.loc[:, 'import_tariff']\
+            .to_numpy(copy=True, dtype=np.float32)
+        self.out_tariff_data = self.df.loc[:, 'export_tariff']\
+            .to_numpy(copy=True, dtype=np.float32)
+
+        self.time_data = self.df.loc[:, 'time'].to_numpy(copy=True)
+        self.weekend_data = self.df.loc[:, 'weekend'].to_numpy(copy=True)
+        self.month_data = self.df.loc[:, 'month'].to_numpy(copy=True)
+        self.region_data = self.df.loc[:, 'region'].to_numpy(copy=True)

@@ -12,7 +12,7 @@ class BatteryOverflowError(Exception):
 class BatteryOverdrawError(Exception):
     pass
 
-class BatteryNotDischargeableError(Exception):
+class BatteryNotexportableError(Exception):
     pass
 
 class BatterySourceMissingError(Exception):
@@ -20,7 +20,7 @@ class BatterySourceMissingError(Exception):
 
 class battery:
     capacity: float
-    dischargeable: bool
+    exportable: bool
     charge_rate: float
     discharge_rate: float
     avl_energy: float
@@ -32,13 +32,13 @@ class battery:
     interval: int # The action interval in minutes. 
     battery_limits: tuple # Upper and lower bounds for battery operation in kWh. 
 
-    def __init__(self, capacity=14, start_soc = 'full', dischargeable = False, 
-                 importable = False, charge_rate=5, discharge_rate=5, 
+    def __init__(self, capacity=14, start_soc = 'full', importable=False, 
+                 exportable = False, charge_rate=5, discharge_rate=5, 
                  round_trip_efficiency=0.9, solar_present=True) -> None:
         """
         Initialize battery specs.
         `capacity` is the total current energy capacity of the battery in kWh        
-        `dischargeable` represents if the battery can send it's power back to 
+        `exportable` represents if the battery can send it's power back to 
             the optimizer for use in another purpose.  
             For example a car cannot do this while a wall battery can.
             
@@ -54,13 +54,12 @@ class battery:
         """
         
         self.capacity = capacity
-        self.dischargeable = dischargeable
+        self.exportable = exportable
         self.importable = importable
         self.max_charge_rate = charge_rate 
         self.max_discharge_rate = discharge_rate
         self.battery_limits = ()
         self.start_soc = start_soc
-        self.soc = self.start_soc
         
         # Connected to solar (True) or not (False)
         self.solar = solar_present
@@ -86,10 +85,13 @@ class battery:
         # Set starting capacity.
         if self.start_soc == 'full':
             self.avl_energy=capacity * 1
+            self.soc = self.avl_energy / self.capacity
         elif self.start_soc == 'empty':
             self.avl_energy=capacity * 0
+            self.soc = self.avl_energy / self.capacity
         elif self.start_soc == 'random':
             self.avl_energy=capacity * np.random.random_sample()
+            self.soc = self.avl_energy / self.capacity
         
         # Assume same rate for charge and discharge. 
         self.discharge_loss = round_trip_efficiency ** 0.5
@@ -126,6 +128,10 @@ class battery:
                                 charging is completed.
         """
         available_capacity = self.get_charge_potential()
+
+        ## Quick hack to get the model running....
+        if input_energy.shape == (1,1):
+            input_energy = input_energy[0]
         
         if input_energy > available_capacity:
             raise BatteryOverflowError
@@ -182,6 +188,11 @@ class battery:
                                 discharging is completed.
         """
         available_capacity = self.get_discharge_potential()
+
+        #print(f'Energy input type: {output_energy}, {type(output_energy)}')
+        # Quick hack to get the model running
+        if output_energy.shape == (1,1):
+            output_energy = output_energy[0]
         
         if output_energy > available_capacity:
             print(f"Output Energy: {output_energy}\nAvailable Capacity: {available_capacity}")
@@ -365,7 +376,7 @@ class battery:
                 charge_limit = min(max_batt_consumption, abs(net_energy))
 
             ## Get Discharge limits: check if battery can export to grid
-            if self.dischargeable: 
+            if self.exportable: 
                 # We can export as much as we can, Load/Solar irrelevant.
                 discharge_limit = - max_batt_supply
             else: 
@@ -385,7 +396,7 @@ class battery:
                 charge_limit = 0
 
             ## Get Discharge limits: check if battery can export to grid
-            if self.dischargeable: 
+            if self.exportable: 
                 # We can export as much as we can, Load/Solar irrelevant,
                 # limited only by max discharge/ current capacity
                 discharge_limit = - max_batt_supply
