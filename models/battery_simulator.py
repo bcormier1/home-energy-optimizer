@@ -133,6 +133,10 @@ class battery:
         if input_energy.shape == (1,1):
             input_energy = input_energy[0]
         
+        eps = 1e-5
+        if abs(input_energy - available_capacity) < eps:
+            input_energy = available_capacity
+
         if input_energy > available_capacity:
             raise BatteryOverflowError
         else:
@@ -194,6 +198,12 @@ class battery:
         if output_energy.shape == (1,1):
             output_energy = output_energy[0]
         
+        # avoid fp error
+        eps = 1e-5
+        if abs(output_energy - available_capacity) < eps:
+            output_energy = available_capacity
+
+
         if output_energy > available_capacity:
             print(f"Output Energy: {output_energy}\nAvailable Capacity: {available_capacity}")
             raise BatteryOverdrawError

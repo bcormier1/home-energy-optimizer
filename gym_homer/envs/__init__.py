@@ -1,1 +1,1 @@
-from gym_homer.envs.test_env import HomerEnv
+from gym_homer.envs.test_env_v0 import HomerEnv
