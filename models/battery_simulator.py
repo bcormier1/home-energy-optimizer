@@ -1,3 +1,4 @@
+from typing import Tuple
 import numpy as np
 
 class BatteryFullError(Exception):
@@ -68,8 +69,9 @@ class battery:
         if not self.importable and not self.solar:
             raise BatterySourceMissingError         
        
-         # Action interval length in minutes
+        # Action interval length in minutes
         self.interval = 5
+        self.eps = 1e-6 # Threshold for floating point error 
         
         # Define the max input/output energy for the given interval
         self.max_input = self.max_charge_rate / 60 * self.interval
@@ -112,30 +114,31 @@ class battery:
         }
     
   
-    def charge_(self, input_energy):        
+    def charge(self, input_energy) -> Tuple[float, float]:        
         """
         Charge the battery with the given input energy amount in kWh.
         The actual amount the capacity changes is less than the input
         energy since there are efficiency losses
         
         input:
-            input_energy (float): The energy to be input into the battery in kWh, before charge losses.
+            input_energy (float): The energy to be input into the battery in 
+                kWh, before charge losses.
         
         return:
-            net_input (float): The amount of energy added to the battery capacity via charging, taking into 
-                                account charging losses.
-            avl_energy (float): The updated current capacity of the battery available for use in kWh after
-                                charging is completed.
-        """
-        available_capacity = self.get_charge_potential()
-
-        ## Quick hack to get the model running....
-        if input_energy.shape == (1,1):
-            input_energy = input_energy[0]
+            net_input (float): The amount of energy added to the battery 
+                capacity via charging, taking into account charging losses.
+            avl_energy (float): The updated current capacity of the battery 
+                available for use in kWh after  charging is completed.
+        """       
+        if input_energy < 0:
+            raise ValueError(f'Non-positive input! {input_energy}')
+        elif input_energy == 0: #Skip
+            return 0, self.avl_energy
         
-        eps = 1e-5
-        if abs(input_energy - available_capacity) < eps:
-            input_energy = available_capacity
+        available_capacity = self.get_charge_potential()
+        
+        if abs(input_energy - available_capacity) < self.eps:
+            input_energy = available_capacity        
 
         if input_energy > available_capacity:
             raise BatteryOverflowError
@@ -148,34 +151,8 @@ class battery:
             self.soc = self.avl_energy / self.capacity
             
         return net_input, self.avl_energy
-
-    def reset(self, capacity, starting_capacity):
-        
-        # Reset capacty and state of charge
-        self.capacity = capacity
-        self.avl_energy = self.capacity * starting_capacity 
-
-        # Reset Decrement Counters
-        self.total_energy_flow = 0
-        self.trip_count = 0
-        self.previous_trip_count = 0
-
-        # Reset Operational Limits and History
-        self.battery_limits = ()
-        self.status_dict = {
-            "timestamp": [],
-            "Total Capacity": [],
-            "Available Capcity": [],
-            "Total Energy Flow": [],
-            "Trip Count": [],
-            "Max Discharge": [],
-            "Max Charge": [],
-            "Discharge Limit": [],
-            "Charge Limit": [],
-            "Setpoint": []
-        }
            
-    def discharge_(self, output_energy):
+    def discharge(self, output_energy) -> Tuple[float, float]:
         """
         Discharges energy = output_energy from the battery in kWh. 
         Decrements the capacity taking into account the discharge losses,
@@ -191,16 +168,14 @@ class battery:
             avl_energy (float): The updated current capacity of the battery available for use in kWh after
                                 discharging is completed.
         """
-        available_capacity = self.get_discharge_potential()
+        if output_energy > 0:
+            raise ValueError(f'Non-negative input! {output_energy}')
+        elif output_energy == 0: #Skip 
+            return 0, self.avl_energy 
 
-        #print(f'Energy input type: {output_energy}, {type(output_energy)}')
-        # Quick hack to get the model running
-        if output_energy.shape == (1,1):
-            output_energy = output_energy[0]
-        
+        available_capacity = self.get_discharge_potential()      
         # avoid fp error
-        eps = 1e-5
-        if abs(output_energy - available_capacity) < eps:
+        if abs(output_energy - available_capacity) < self.eps:
             output_energy = available_capacity
 
 
@@ -212,7 +187,7 @@ class battery:
             full_decrement = output_energy / self.discharge_loss
             
             # Discharge battery, update capacity decrement
-            self.avl_energy -= full_decrement
+            self.avl_energy += full_decrement
             self.update_capacity_degredation(full_decrement)
             self.soc = self.avl_energy / self.capacity
             
@@ -243,19 +218,24 @@ class battery:
         # Update previous_trip_count
         self.previous_trip_count = self.trip_count
         
-    def get_charge_potential(self):        
+    def get_charge_potential(self) -> float:        
         """
         returns the maximum allowable input into the battery in kWh
         over a given time interval, allowing for charge losses.
+        Value returned is in absolute magnitude, not taking into account 
+        direction of flow.
         
         inputs:
-            capacity (float): total current storage potential of the battery in kWh.
-            avl_energy (float): total current energy present in the battery in kWh.
-            charge_loss (float): the percentage loss in energy due to charging efficiency losses.
+            capacity (float): total current storage potential of the battery 
+                in kWh.
+            avl_energy (float): total current energy present in the battery 
+                in kWh.
+            charge_loss (float): the percentage loss in energy due to charging 
+                efficiency losses.
         
         return:
-            charge_max (float): the maximum allowable input into the battery over the given
-                                time interval in kWh. 
+            charge_max (float): the maximum allowable input into the battery 
+                over the given time interval in kWh. 
         """
         
         capacity=self.capacity 
@@ -270,15 +250,17 @@ class battery:
         else:
             charge_max = self.max_input #Limited by discharge rate/time
             
-        if charge_max < 1e-16:
+        if charge_max < self.eps:
             charge_max = 0
             
         return charge_max
     
-    def get_discharge_potential(self):        
+    def get_discharge_potential(self) -> float:        
         """
         returns the maximum available energy output from the battery for some 
         time interval, allowing for discharge losses.
+        Energy returned is in absolute magnitude, not taking into account
+        direction. 
         
         inputs:
             avl_energy (float): total current energy present in the battery in 
@@ -301,7 +283,7 @@ class battery:
         else:
             discharge_max = self.max_output #Limited by discharge rate/time
             
-        if discharge_max < 1e-16:
+        if discharge_max < self.eps:
             discharge_max = 0
         
         return discharge_max
@@ -329,7 +311,7 @@ class battery:
         for key, val in update_dict.items():
             self.status_dict[f"{key}"].update(val)
         
-    def get_limits(self, solar, load):
+    def get_limits(self, solar, load) -> Tuple[float,float]:
         """
         Calculates the operation limits of the battery, given some inputs for 
         the system solar outputs and household loads. It calculates the net 
@@ -418,3 +400,29 @@ class battery:
         # Return discharge and charge bounds. 
         self.battery_limits = (discharge_limit, charge_limit)
         return self.battery_limits
+
+    def reset(self, capacity, starting_capacity) -> None:
+        
+        # Reset capacty and state of charge
+        self.capacity = capacity
+        self.avl_energy = self.capacity * starting_capacity 
+
+        # Reset Decrement Counters
+        self.total_energy_flow = 0
+        self.trip_count = 0
+        self.previous_trip_count = 0
+
+        # Reset Operational Limits and History
+        self.battery_limits = ()
+        self.status_dict = {
+            "timestamp": [],
+            "Total Capacity": [],
+            "Available Capcity": [],
+            "Total Energy Flow": [],
+            "Trip Count": [],
+            "Max Discharge": [],
+            "Max Charge": [],
+            "Discharge Limit": [],
+            "Charge Limit": [],
+            "Setpoint": []
+        }
