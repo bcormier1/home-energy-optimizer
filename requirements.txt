@@ -81,7 +81,7 @@ widgetsnbextension==4.0.3
 fastparquet
 tqdm
 gym
-stable-baselines3
+tianshou
 
 
 
