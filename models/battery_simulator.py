@@ -94,6 +94,9 @@ class battery:
         elif self.start_soc == 'random':
             self.avl_energy=capacity * np.random.random_sample()
             self.soc = self.avl_energy / self.capacity
+        elif self.start_soc == 'half':
+            self.avl_energy=capacity * 0.5
+            self.soc = self.avl_energy / self.capacity
         
         # Assume same rate for charge and discharge. 
         self.discharge_loss = round_trip_efficiency ** 0.5
