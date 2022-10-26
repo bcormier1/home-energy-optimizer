@@ -1,0 +1,5 @@
+{
+    "editor.rulers": [79],
+    "python.linting.enabled": true,
+    "notebook.output.textLineLimit": 100000
+}
