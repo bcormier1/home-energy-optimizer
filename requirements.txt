@@ -80,3 +80,8 @@ webencodings==0.5.1
 widgetsnbextension==4.0.3
 fastparquet
 tqdm
+gym
+stable-baselines3
+
+
+
