@@ -1,4 +1,3 @@
-from symbol import pass_stmt
 from typing import Any, Dict, Tuple
 import numpy as np
 import matplotlib.pyplot as plt
@@ -295,3 +294,6 @@ class HomerEnv(gym.Env):
         self.idx = {k: v for v, k in enumerate(self.df.columns)}
         # Full data array
         self.data_arr = self.df.to_numpy(copy=True, dtype=np.float32)
+        
+    def seed(self, seed):
+        np.random.seed(seed)
