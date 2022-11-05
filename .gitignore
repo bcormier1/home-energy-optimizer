@@ -1,5 +1,9 @@
+__pycache__/
 /ts
 ts
 sb3
 /sb3
 project_ve
+.ipynb_checkpoints/
+*.pyc
+*.DS_Store
