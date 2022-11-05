@@ -2,7 +2,7 @@ from typing import Any, Dict, Tuple
 import numpy as np
 import matplotlib.pyplot as plt
 from enum import Enum
-
+import os
 import gym
 from gym import spaces
 
@@ -233,16 +233,64 @@ class HomerEnv(gym.Env):
             reward = 0
         return float(reward)
 
-    def render(self, mode='human') -> None:       
-        #pass
-        print(f"Step Reward: {self.reward}\n"
-              f"Action : {self.history['action'][self._current_tick]}")
+    def render(self, mode='human') -> None:
+        if mode == 'human':
+
+            fig, axs = plt.subplots(1, 2, layout="constrained")
+
+            # Set Colour
+            c = 'red'
+            if self.battery.soc > 0.7:
+                c = 'green'
+            elif 0.3 < self.battery.soc <= 0.7:
+                c = 'orange'
+
+            bar_1 = axs[0].bar(['Battery Capacity'], self.battery.soc * 100, 
+                color=c, alpha = 0.8)
+            axs[0].set_ylim(0,100)
+            axs[0].bar_label(bar_1, label_type='center', fmt='%.2f')
+            axs[0].set_ylabel('Percent %')
+
+            s = 'black'
+            if self.e_flux > 0:
+                s = 'blue'
+            elif self.e_flux < 0:
+                s = 'yellow' 
+            bar_2 = axs[1].bar(['Battery Output'], self.e_flux, 
+                color=s, alpha=0.8)
+            axs[1].set_ylim(self.battery.max_output * -1,   
+                            self.battery.max_input)
+            axs[1].bar_label(bar_2, label_type='center', fmt='%.2f')
+            axs[1].set_ylabel('Kilowatts kW')
+
+            if self.action == Actions.Charge.value:
+                ac = 'Charging!'
+            elif self.action == Actions.Discharge.value:
+                ac = 'Discharging!'
+            else:
+                ac = 'Standby'
+            title = str(f'Step: {self._current_tick}'
+                    f'Action: {ac} Net Energy: {self.net:.4f} kW'
+                    f"\nStep Reward: \${self.reward:.2f},"
+                    f"Cumulative Reward: \${self.cumulative_reward:.2f}")
+            fig.suptitle(
+                f'Step: {self._current_tick}'
+                f'Action: {ac} Net Energy: {self.net:.4f} kW'
+                f"\nStep Reward: \${self.reward:.2f},"
+                f"Cumulative Reward: \${self.cumulative_reward:.2f}",
+                y=1.1)
+            self.save_rendering(f'{os.getcwd()+"/renders/"}plot')
+
+        else:
+            pass
+            print(f"Step Reward: {self.reward}\n"
+                f"Action : {self.history['action'][self._current_tick]}")
 
     def close(self) -> None:
-        pass
+        plt.close()
 
     def save_rendering(self, filepath) -> None:
-        pass
+        plt.savefig(f'{filepath}_{str(self._current_tick)}.png')
     
     def _process_data(self) -> None:
         """
@@ -254,5 +302,8 @@ class HomerEnv(gym.Env):
         # Full data array
         self.data_arr = self.df.to_numpy(copy=True, dtype=np.float32)
 
+        
+    def seed(self, seed):
+        np.random.seed(seed)
 
 

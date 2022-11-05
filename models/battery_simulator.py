@@ -399,7 +399,9 @@ class battery:
                 # We cannot discharge more than the solar deficit, or
                 # the max discharge/current capacity of our battery
                 discharge_limit = - min(max_batt_supply, abs(net_energy))
-
+        else:
+            print(net_energy)
+            raise Exception
         # Return discharge and charge bounds. 
         self.battery_limits = (discharge_limit, charge_limit)
         return self.battery_limits
