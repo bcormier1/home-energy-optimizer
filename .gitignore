@@ -1,6 +1,10 @@
+__pycache__/
 /ts
 ts
 sb3
 /sb3
 homer_env
 project_ve
+.ipynb_checkpoints/
+*.pyc
+*.DS_Store
