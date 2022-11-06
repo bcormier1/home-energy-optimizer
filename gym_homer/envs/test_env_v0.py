@@ -200,7 +200,7 @@ class HomerEnv(gym.Env):
         if energy > 0:
             self.battery.discharge(max_d)
             e_flux = max_d 
-        if energy < max_d:
+        elif energy < max_d:
             try:
                 self.battery.charge(energy)
                 e_flux = energy
