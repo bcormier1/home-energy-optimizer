@@ -18,7 +18,7 @@ class HomerEnv(gym.Env):
     metadata = {'render_modes': ['human'], "render_fps": 4}
 
     def __init__(self, capacity=10, start_soc='full', render_mode=None, 
-    discrete=True, data=None) -> None:
+    discrete=True, data=None,) -> None:
 
         """
         TODO: Update docstring.
@@ -95,7 +95,7 @@ class HomerEnv(gym.Env):
         self._do_first_step(first_obs)
 
         # Get observation and info
-        obs = self._get_obs()  
+        # obs = self._get_obs()  # we probably don't want this
         info = self._get_info()
         self._log_step(info)
 
@@ -117,7 +117,14 @@ class HomerEnv(gym.Env):
 
 
         # Update Battery and calculate reward
-        self.net, self.e_flux = self._apply_action(action, obs[self.idx['solar']] + obs[self.idx['loads']] + obs[self.idx['max_d']], obs[self.idx['max_d']])
+        if self.discrete:
+            self.net, self.e_flux = self._update_battery(obs[self.idx['solar']],
+                                                    obs[self.idx['loads']], 
+                                                    obs[self.idx['max_d']], 
+                                                    obs[self.idx['max_c']], 
+                                                    action)
+        else:
+            self.net, self.e_flux = self._apply_action(action, obs[self.idx['solar']] + obs[self.idx['loads']] + obs[self.idx['max_d']], obs[self.idx['max_d']])
 
         self.reward = self._calculate_reward(self.net,
                                             obs[self.idx['export_tariff']], 
@@ -194,6 +201,25 @@ class HomerEnv(gym.Env):
 
         for key, value in info.items():
             self.history[key].append(value)
+
+    def _update_battery(self, solar, loads, max_d, max_c, action
+    ) -> Tuple[float,float]:
+        # Calculate Grid State, Update Battery state
+        if action == Actions.Charge.value:
+            net = loads + solar + (max_c)
+            self.battery.charge(max_c)
+            e_flux = max_c
+        elif action == Actions.Discharge.value:
+            net = loads + solar + (max_d)
+            self.battery.discharge(max_d)
+            e_flux = max_d
+        elif action == Actions.Standby.value:
+            net = loads + solar
+            e_flux = 0
+        else:
+        raise Exception(f'Action not recognised!'
+                        '{action}, d{max_d}, c{max_c}')
+        return net, e_flux
 
     def _apply_action_to_battery(self, energy, max_d):
         #print(f'signed energy: {energy}, max out :{self.battery.max_output}, mac_d:{max_d}')
