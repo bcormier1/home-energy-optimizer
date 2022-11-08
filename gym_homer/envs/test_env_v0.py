@@ -110,20 +110,24 @@ class HomerEnv(gym.Env):
         that action and then returns the 4-tuple (observation, reward, done,
         info). 
         """
+        #print("stepping")
         # Take a step, update observation index. 
         self._current_tick += 1
         self.action = action
         obs = self._get_obs()
+        print(f'obs: {obs}')
 
 
         # Update Battery and calculate reward
         if self.discrete:
+            #print('discrete')
             self.net, self.e_flux = self._update_battery(obs[self.idx['solar']],
                                                     obs[self.idx['loads']], 
                                                     obs[self.idx['max_d']], 
                                                     obs[self.idx['max_c']], 
                                                     action)
         else:
+            #print("were taking action")
             self.net, self.e_flux = self._apply_action(action, obs[self.idx['loads']] + obs[self.idx['solar']])
 
         self.reward = self._calculate_reward(self.net,
@@ -241,6 +245,8 @@ class HomerEnv(gym.Env):
         return e_flux
 
     def _apply_action(self,action, home):
+        #print(f'obs: {self.obs}')
+        print(f'action: {action}')
         if action > 0:
             charge_request = action*self.battery.max_input
             e_flux, _ = self.battery.charge(charge_request)
@@ -259,6 +265,7 @@ class HomerEnv(gym.Env):
             reward = net * import_tariff * -1
         else:
             reward = 0
+        print(f'net: {net}, reward: {reward}')
         return float(reward)
 
     def render(self, mode='human') -> None:

@@ -143,8 +143,9 @@ class battery:
         if abs(input_energy - available_capacity) < self.eps:
             input_energy = available_capacity        
 
-        if input_energy > available_capacity:
-           net_input = available_capacity
+        if input_energy * self.charge_loss > available_capacity:
+            # Need to clip the energy input to max allowable.
+            net_input = available_capacity
         else:
             # Calculate the actual amount decremented
             net_input = input_energy * self.charge_loss
@@ -182,7 +183,7 @@ class battery:
             output_energy = available_capacity
 
 
-        if output_energy > available_capacity:
+        if output_energy / self.discharge_loss > available_capacity:
             full_decrement = available_capacity
         else:
             # Calculate the full amout required to be extracted including losses
