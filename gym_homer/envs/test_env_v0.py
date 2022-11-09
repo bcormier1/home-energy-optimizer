@@ -52,9 +52,10 @@ class HomerEnv(gym.Env):
            
         ## Action Spaces
         if self.discrete:
-            self.action_space = spaces.Discrete(3, start=-1)
+            self.action_space = spaces.Discrete(3, start=0)
         else:
-            self.action_space = spaces.Box(low=-1, high=1, shape=(1,), dtype=np.float32)
+            self.action_space = spaces.Discrete(20, start=0)
+            #self.action_space = spaces.Box(low=-10, high=10, shape=(1,), dtype=np.float32)
 
 
 
@@ -115,7 +116,8 @@ class HomerEnv(gym.Env):
         self._current_tick += 1
         self.action = action
         obs = self._get_obs()
-        print(f'obs: {obs}')
+        #print(f'obs: {obs}')
+        #print(f'action: {action}')
 
 
         # Update Battery and calculate reward
@@ -128,6 +130,8 @@ class HomerEnv(gym.Env):
                                                     action)
         else:
             #print("were taking action")
+            action = (action-10)/10
+            #print(f'scaled action: {action}')
             self.net, self.e_flux = self._apply_action(action, obs[self.idx['loads']] + obs[self.idx['solar']])
 
         self.reward = self._calculate_reward(self.net,
@@ -246,7 +250,6 @@ class HomerEnv(gym.Env):
 
     def _apply_action(self,action, home):
         #print(f'obs: {self.obs}')
-        print(f'action: {action}')
         if action > 0:
             charge_request = action*self.battery.max_input
             e_flux, _ = self.battery.charge(charge_request)
@@ -265,7 +268,7 @@ class HomerEnv(gym.Env):
             reward = net * import_tariff * -1
         else:
             reward = 0
-        print(f'net: {net}, reward: {reward}')
+        #print(f'net: {net}, reward: {reward}')
         return float(reward)
 
     def render(self, mode='human') -> None:
