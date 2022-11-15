@@ -18,7 +18,7 @@ class HomerEnv(gym.Env):
     metadata = {'render_modes': ['human'], "render_fps": 4}
 
     def __init__(self, capacity=10, start_soc='full', render_mode=None, 
-    discrete=True, data=None,) -> None:
+    discrete=True, data=None, action_fraction=10) -> None:
 
         """
         TODO: Update docstring.
@@ -27,6 +27,8 @@ class HomerEnv(gym.Env):
         self.discrete=discrete
         self.df=data   
         self._process_data()
+
+        self.action_fraction = action_fraction
 
         # Battery Things
         self.start_capacity=capacity
@@ -54,8 +56,7 @@ class HomerEnv(gym.Env):
         if self.discrete:
             self.action_space = spaces.Discrete(3, start=0)
         else:
-            self.action_space = spaces.Discrete(20, start=0)
-            #self.action_space = spaces.Box(low=-10, high=10, shape=(1,), dtype=np.float32)
+            self.action_space = spaces.Discrete(2*self.action_fraction, start=0)
 
 
 
@@ -111,27 +112,21 @@ class HomerEnv(gym.Env):
         that action and then returns the 4-tuple (observation, reward, done,
         info). 
         """
-        #print("stepping")
         # Take a step, update observation index. 
         self._current_tick += 1
         self.action = action
         obs = self._get_obs()
-        #print(f'obs: {obs}')
-        #print(f'action: {action}')
 
 
         # Update Battery and calculate reward
         if self.discrete:
-            #print('discrete')
             self.net, self.e_flux = self._update_battery(obs[self.idx['solar']],
                                                     obs[self.idx['loads']], 
                                                     obs[self.idx['max_d']], 
                                                     obs[self.idx['max_c']], 
                                                     action)
         else:
-            #print("were taking action")
-            action = (action-10)/10
-            #print(f'scaled action: {action}')
+            action = (action-self.action_fraction)/self.action_fraction
             self.net, self.e_flux = self._apply_action(action, obs[self.idx['loads']] + obs[self.idx['solar']])
 
         self.reward = self._calculate_reward(self.net,
@@ -230,7 +225,6 @@ class HomerEnv(gym.Env):
         return net, e_flux
 
     def _apply_action_to_battery(self, energy, max_d):
-        #print(f'signed energy: {energy}, max out :{self.battery.max_output}, mac_d:{max_d}')
         if energy > 0:
             self.battery.discharge(max_d)
             e_flux = max_d 
@@ -249,7 +243,6 @@ class HomerEnv(gym.Env):
         return e_flux
 
     def _apply_action(self,action, home):
-        #print(f'obs: {self.obs}')
         if action > 0:
             charge_request = action*self.battery.max_input
             e_flux, _ = self.battery.charge(charge_request)
@@ -268,7 +261,6 @@ class HomerEnv(gym.Env):
             reward = net * import_tariff * -1
         else:
             reward = 0
-        #print(f'net: {net}, reward: {reward}')
         return float(reward)
 
     def render(self, mode='human') -> None:
