@@ -18,7 +18,7 @@ class HomerEnv(gym.Env):
     metadata = {'render_modes': ['human'], "render_fps": 4}
 
     def __init__(self, capacity=10, start_soc='full', render_mode=None, 
-    discrete=True, data=None) -> None:
+    discrete=True, data=None, charge_rate=5) -> None:
 
         """
         TODO: Update docstring.
@@ -34,7 +34,9 @@ class HomerEnv(gym.Env):
         self.exportable = True
         self.importable = True
         self.e_flux = None 
-        self.net = None 
+        self.net = None
+        self.charge_rate = charge_rate
+        self.discharge_rate = charge_rate
 
         # Episode 
         self.start_tick = 0
@@ -52,7 +54,7 @@ class HomerEnv(gym.Env):
            
         ## Action Spaces
         if self.discrete:
-            self.action_space = spaces.Discrete(3, start=-1)
+            self.action_space = spaces.Discrete(3, start=0)
         else:
             self.action_space = spaces.Box(low=-1, high=1.0, dtype=np.float32)
 
@@ -83,7 +85,8 @@ class HomerEnv(gym.Env):
                                start_soc=self.start_soc, 
                                importable=self.importable, 
                                exportable=self.exportable, 
-                               charge_rate=12, discharge_rate=12)
+                               charge_rate=self.charge_rate, 
+                               discharge_rate=self.charge_rate)
 
         # Set first and last tick
         self._current_tick = self.start_tick
@@ -112,6 +115,7 @@ class HomerEnv(gym.Env):
         # Take a step, update observation index. 
         self._current_tick += 1
         self.action = action
+        
         obs = self._get_obs()
 
         # Update Battery and calculate reward
