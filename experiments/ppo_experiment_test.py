@@ -19,7 +19,7 @@ from data.data_utils import (
 
 import gym
 from gym import spaces, wrappers
-from gym_homer.envs.test_env_v0 import HomerEnv
+from gym_homer.envs.test_env_v00 import HomerEnv
 
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
