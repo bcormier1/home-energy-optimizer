@@ -143,15 +143,16 @@ class battery:
         if abs(input_energy - available_capacity) < self.eps:
             input_energy = available_capacity        
 
-        if input_energy > available_capacity:
-            raise BatteryOverflowError
+        if input_energy * self.charge_loss > available_capacity:
+            # Need to clip the energy input to max allowable.
+            net_input = available_capacity
         else:
             # Calculate the actual amount decremented
             net_input = input_energy * self.charge_loss
-            # Update capacity and decrement capacity
-            self.avl_energy += net_input
-            self.update_capacity_degredation(net_input)
-            self.soc = self.avl_energy / self.capacity
+        # Update capacity and decrement capacity
+        self.avl_energy += net_input
+        self.update_capacity_degredation(net_input)
+        self.soc = self.avl_energy / self.capacity
             
         return net_input, self.avl_energy
            
@@ -182,17 +183,16 @@ class battery:
             output_energy = available_capacity
 
 
-        if output_energy > available_capacity:
-            print(f"Output Energy: {output_energy}\nAvailable Capacity: {available_capacity}")
-            raise BatteryOverdrawError
+        if output_energy / self.discharge_loss > available_capacity:
+            full_decrement = available_capacity
         else:
             # Calculate the full amout required to be extracted including losses
             full_decrement = output_energy / self.discharge_loss
-            
-            # Discharge battery, update capacity decrement
-            self.avl_energy += full_decrement
-            self.update_capacity_degredation(full_decrement)
-            self.soc = self.avl_energy / self.capacity
+        
+        # Discharge battery, update capacity decrement
+        self.avl_energy += full_decrement
+        self.update_capacity_degredation(full_decrement)
+        self.soc = self.avl_energy / self.capacity
             
         return full_decrement, self.avl_energy 
        

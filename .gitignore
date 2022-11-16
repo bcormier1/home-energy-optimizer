@@ -28,3 +28,4 @@ experiments/config/.ipynb_checkpoints/
 experiments/config/templates/.ipynb_checkpoints/
 logs/
 experiments/wandb/
+notebooks/log/*
