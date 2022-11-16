@@ -1,9 +1,13 @@
+__pycache__/
 /ts
 ts
 sb3
 /sb3
 homer_env
 project_ve
+.ipynb_checkpoints/
+*.pyc
+*.DS_Store
 data/simple_pricing/train
 data/simple_pricing/test
 data/simple_pricing/compiled_data_simpleprice.parquet

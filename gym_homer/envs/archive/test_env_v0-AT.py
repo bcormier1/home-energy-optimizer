@@ -6,7 +6,7 @@ import os
 import gym
 from gym import spaces
 
-from models.battery_simulator import battery
+from models.battery_simulator import battery, BatteryOverflowError, BatteryOverdrawError
 
 class Actions(Enum):
     Charge = 2
@@ -56,7 +56,8 @@ class HomerEnv(gym.Env):
         if self.discrete:
             self.action_space = spaces.Discrete(3, start=0)
         else:
-            self.action_space = spaces.Box(low=-1, high=1.0, dtype=np.float32)
+            self.action_space = spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32)
+
 
 
         ## Observation Spaces
@@ -118,12 +119,10 @@ class HomerEnv(gym.Env):
         
         obs = self._get_obs()
 
+
         # Update Battery and calculate reward
-        self.net, self.e_flux = self._update_battery(obs[self.idx['solar']],
-                                                    obs[self.idx['loads']], 
-                                                    obs[self.idx['max_d']], 
-                                                    obs[self.idx['max_c']], 
-                                                    action)
+        self.net, self.e_flux = self._apply_action(action, obs[self.idx['solar']] + obs[self.idx['loads']] + obs[self.idx['max_d']], obs[self.idx['max_d']])
+
         self.reward = self._calculate_reward(self.net,
                                             obs[self.idx['export_tariff']], 
                                             obs[self.idx['import_tariff']])
@@ -200,23 +199,32 @@ class HomerEnv(gym.Env):
         for key, value in info.items():
             self.history[key].append(value)
 
-    def _update_battery(self, solar, loads, max_d, max_c, action
-    ) -> Tuple[float,float]:
-        # Calculate Grid State, Update Battery state
-        if action == Actions.Charge.value:
-            net = loads + solar + max_c
-            self.battery.charge(max_c)
-            e_flux = max_c
-        elif action == Actions.Discharge.value:
-            net = loads + solar + max_d
+    def _apply_action_to_battery(self, energy, max_d):
+        #print(f'signed energy: {energy}, max out :{self.battery.max_output}, mac_d:{max_d}')
+        if energy > 0:
             self.battery.discharge(max_d)
-            e_flux = max_d
-        elif action == Actions.Standby.value:
-            net = loads + solar
-            e_flux = 0
+            e_flux = max_d 
+        if energy < max_d:
+            try:
+                self.battery.charge(energy)
+                e_flux = energy
+            except BatteryOverflowError:
+                    pass
         else:
-            raise Exception(f'Action not recognised!'
-                            '{action}, d{max_d}, c{max_c}')
+            try:
+                self.battery.discharge(max_d - energy)
+                e_flux = max_d - energy
+            except BatteryOverdrawError:
+                pass
+        return e_flux
+
+    def _apply_action(self,action, total_energy, max_d):
+        if total_energy > 0:
+            net = total_energy
+            e_flux = self._apply_action_to_battery(net, max_d)
+        else:
+            e_flux = self._apply_action_to_battery(action*total_energy, max_d)
+            net = (1-action)*total_energy
         return net, e_flux
 
     def _calculate_reward(self, net, export_tariff, import_tariff) -> float:
@@ -229,8 +237,7 @@ class HomerEnv(gym.Env):
             reward = 0
         return float(reward)
 
-    def render(self, mode='human') -> None:       
-        
+    def render(self, mode='human') -> None:
         if mode == 'human':
 
             fig, axs = plt.subplots(1, 2, layout="constrained")
@@ -298,6 +305,9 @@ class HomerEnv(gym.Env):
         self.idx = {k: v for v, k in enumerate(self.df.columns)}
         # Full data array
         self.data_arr = self.df.to_numpy(copy=True, dtype=np.float32)
+
         
     def seed(self, seed):
         np.random.seed(seed)
+
+
