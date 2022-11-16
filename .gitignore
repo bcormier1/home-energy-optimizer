@@ -8,3 +8,4 @@ project_ve
 .ipynb_checkpoints/
 *.pyc
 *.DS_Store
+notebooks/log/*

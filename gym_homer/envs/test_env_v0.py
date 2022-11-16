@@ -18,7 +18,7 @@ class HomerEnv(gym.Env):
     metadata = {'render_modes': ['human'], "render_fps": 4}
 
     def __init__(self, capacity=10, start_soc='full', render_mode=None, 
-    discrete=True, data=None) -> None:
+    discrete=True, data=None, action_fraction=10) -> None:
 
         """
         TODO: Update docstring.
@@ -27,6 +27,8 @@ class HomerEnv(gym.Env):
         self.discrete=discrete
         self.df=data   
         self._process_data()
+
+        self.action_fraction = action_fraction
 
         # Battery Things
         self.start_capacity=capacity
@@ -52,9 +54,9 @@ class HomerEnv(gym.Env):
            
         ## Action Spaces
         if self.discrete:
-            self.action_space = spaces.Discrete(3, start=-1)
+            self.action_space = spaces.Discrete(3, start=0)
         else:
-            self.action_space = spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32)
+            self.action_space = spaces.Discrete(2*self.action_fraction, start=0)
 
 
 
@@ -95,14 +97,14 @@ class HomerEnv(gym.Env):
         self._do_first_step(first_obs)
 
         # Get observation and info
-        obs = self._get_obs()  
+        # obs = self._get_obs()  # we probably don't want this
         info = self._get_info()
         self._log_step(info)
 
         if self.render_mode == "human":
             self._render_frame()
 
-        return obs, info
+        return first_obs, info
 
     def step(self, action) -> Tuple[np.ndarray, float, bool, bool, Dict]:
         """
@@ -117,7 +119,15 @@ class HomerEnv(gym.Env):
 
 
         # Update Battery and calculate reward
-        self.net, self.e_flux = self._apply_action(action, obs[self.idx['solar']] + obs[self.idx['loads']] + obs[self.idx['max_d']], obs[self.idx['max_d']])
+        if self.discrete:
+            self.net, self.e_flux = self._update_battery(obs[self.idx['solar']],
+                                                    obs[self.idx['loads']], 
+                                                    obs[self.idx['max_d']], 
+                                                    obs[self.idx['max_c']], 
+                                                    action)
+        else:
+            action = (action-self.action_fraction)/self.action_fraction
+            self.net, self.e_flux = self._apply_action(action, obs[self.idx['loads']] + obs[self.idx['solar']])
 
         self.reward = self._calculate_reward(self.net,
                                             obs[self.idx['export_tariff']], 
@@ -195,12 +205,30 @@ class HomerEnv(gym.Env):
         for key, value in info.items():
             self.history[key].append(value)
 
+    def _update_battery(self, solar, loads, max_d, max_c, action
+    ) -> Tuple[float,float]:
+        # Calculate Grid State, Update Battery state
+        if action == Actions.Charge.value:
+            net = loads + solar + (max_c)
+            self.battery.charge(max_c)
+            e_flux = max_c
+        elif action == Actions.Discharge.value:
+            net = loads + solar + (max_d)
+            self.battery.discharge(max_d)
+            e_flux = max_d
+        elif action == Actions.Standby.value:
+            net = loads + solar
+            e_flux = 0
+        else:
+            raise Exception(f'Action not recognised!'
+                        '{action}, d{max_d}, c{max_c}')
+        return net, e_flux
+
     def _apply_action_to_battery(self, energy, max_d):
-        #print(f'signed energy: {energy}, max out :{self.battery.max_output}, mac_d:{max_d}')
         if energy > 0:
             self.battery.discharge(max_d)
             e_flux = max_d 
-        if energy < max_d:
+        elif energy < max_d:
             try:
                 self.battery.charge(energy)
                 e_flux = energy
@@ -214,13 +242,15 @@ class HomerEnv(gym.Env):
                 pass
         return e_flux
 
-    def _apply_action(self,action, total_energy, max_d):
-        if total_energy > 0:
-            net = total_energy
-            e_flux = self._apply_action_to_battery(net, max_d)
+    def _apply_action(self,action, home):
+        if action > 0:
+            charge_request = action*self.battery.max_input
+            e_flux, _ = self.battery.charge(charge_request)
+            net = home + e_flux
         else:
-            e_flux = self._apply_action_to_battery(action*total_energy, max_d)
-            net = (1-action)*total_energy
+            discharge_request = action*self.battery.max_output
+            e_flux, _ = self.battery.discharge(discharge_request)
+            net = home + e_flux
         return net, e_flux
 
     def _calculate_reward(self, net, export_tariff, import_tariff) -> float:
