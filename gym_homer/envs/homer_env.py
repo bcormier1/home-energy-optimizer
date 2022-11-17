@@ -1,7 +1,11 @@
-""""
-Test Environments for archive/back up purposes. 
+"""
+Date: 17th November 2022
 
-""""
+Gym Environment for Home Energy Management
+
+Authors: Alexander To and Brody Cormier
+Version: v1
+"""
 
 
 from typing import Any, Dict, Tuple
@@ -12,7 +16,11 @@ import os
 import gym
 from gym import spaces
 
-from models.battery_simulator import battery, BatteryOverflowError, BatteryOverdrawError
+from models.battery_simulator import (
+    battery, 
+    BatteryOverflowError, 
+    BatteryOverdrawError
+)
 
 class Actions(Enum):
     Charge = 2
@@ -24,7 +32,7 @@ class HomerEnv(gym.Env):
     metadata = {'render_modes': ['human'], "render_fps": 4}
 
     def __init__(self, capacity=10, start_soc='full', render_mode=None, 
-    discrete=True, data=None, charge_rate=5) -> None:
+    discrete=True, data=None, charge_rate=5, action_intervals=10) -> None:
 
         """
         TODO: Update docstring.
@@ -34,15 +42,15 @@ class HomerEnv(gym.Env):
         self.df=data   
         self._process_data()
 
+        self.action_intervals = action_intervals
+
         # Battery Things
         self.start_capacity=capacity
         self.start_soc=start_soc
         self.exportable = True
         self.importable = True
         self.e_flux = None 
-        self.net = None
-        self.charge_rate = charge_rate
-        self.discharge_rate = charge_rate
+        self.net = None 
 
         # Episode 
         self.start_tick = 0
@@ -61,10 +69,10 @@ class HomerEnv(gym.Env):
         ## Action Spaces
         if self.discrete:
             self.action_space = spaces.Discrete(3, start=0)
+        # Pseudo continuous with n=action_intervals fractional increments for
+        # charge/discharge amounts. 
         else:
-            self.action_space = spaces.Box(low=0, high=1, shape=(1,), dtype=np.float32)
-
-
+            self.action_space = spaces.Discrete(2*self.action_intervals, start=0)
 
         ## Observation Spaces
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, 
@@ -104,14 +112,13 @@ class HomerEnv(gym.Env):
         self._do_first_step(first_obs)
 
         # Get observation and info
-        obs = self._get_obs()  
         info = self._get_info()
         self._log_step(info)
 
         if self.render_mode == "human":
             self._render_frame()
 
-        return obs, info
+        return first_obs, info
 
     def step(self, action) -> Tuple[np.ndarray, float, bool, bool, Dict]:
         """
@@ -122,16 +129,30 @@ class HomerEnv(gym.Env):
         # Take a step, update observation index. 
         self._current_tick += 1
         self.action = action
-        
         obs = self._get_obs()
 
 
         # Update Battery and calculate reward
-        self.net, self.e_flux = self._apply_action(action, obs[self.idx['solar']] + obs[self.idx['loads']] + obs[self.idx['max_d']], obs[self.idx['max_d']])
+        if self.discrete:
+            self.net, self.e_flux = self._update_battery(
+                obs[self.idx['solar']],
+                obs[self.idx['loads']], 
+                obs[self.idx['max_d']], 
+                obs[self.idx['max_c']], 
+                action
+            )
+        else:
+            action = (action - self.action_intervals) / self.action_intervals
+            self.net, self.e_flux = self._apply_action(
+                action, 
+                obs[self.idx['loads']] + obs[self.idx['solar']]
+            )
 
-        self.reward = self._calculate_reward(self.net,
-                                            obs[self.idx['export_tariff']], 
-                                            obs[self.idx['import_tariff']])
+        self.reward = self._calculate_reward(
+            self.net,
+            obs[self.idx['export_tariff']],
+            obs[self.idx['import_tariff']]
+        )
         self.cumulative_reward += self.reward 
 
         # Calculate whether terminated
@@ -205,37 +226,41 @@ class HomerEnv(gym.Env):
         for key, value in info.items():
             self.history[key].append(value)
 
-    def _apply_action_to_battery(self, energy, max_d):
-        #print(f'signed energy: {energy}, max out :{self.battery.max_output}, mac_d:{max_d}')
-        if energy > 0:
+    def _update_battery(self, solar, loads, max_d, max_c, action
+    ) -> Tuple[float,float]:
+        # Calculate Grid State, Update Battery state
+        if action == Actions.Charge.value:
+            net = loads + solar + (max_c)
+            self.battery.charge(max_c)
+            e_flux = max_c
+        elif action == Actions.Discharge.value:
+            net = loads + solar + (max_d)
             self.battery.discharge(max_d)
-            e_flux = max_d 
-        if energy < max_d:
-            try:
-                self.battery.charge(energy)
-                e_flux = energy
-            except BatteryOverflowError:
-                    pass
+            e_flux = max_d
+        elif action == Actions.Standby.value:
+            net = loads + solar
+            e_flux = 0
         else:
-            try:
-                self.battery.discharge(max_d - energy)
-                e_flux = max_d - energy
-            except BatteryOverdrawError:
-                pass
-        return e_flux
+            raise Exception(f'Action not recognised!'
+                        '{action}, d{max_d}, c{max_c}')
+        return net, e_flux
 
-    def _apply_action(self,action, total_energy, max_d):
-        if total_energy > 0:
-            net = total_energy
-            e_flux = self._apply_action_to_battery(net, max_d)
+    def _apply_action(self,action, home):
+        if action > 0:
+            charge_request = action * self.battery.max_input
+            e_flux, _ = self.battery.charge(charge_request)
+            net = home + e_flux
         else:
-            e_flux = self._apply_action_to_battery(action*total_energy, max_d)
-            net = (1-action)*total_energy
+            discharge_request = action * self.battery.max_output
+            e_flux, _ = self.battery.discharge(discharge_request)
+            net = home + e_flux
         return net, e_flux
 
     def _calculate_reward(self, net, export_tariff, import_tariff) -> float:
         # Calculate reward
         if net < 0:
+            if export_tariff < 0:
+                export_tariff *= -1
             reward = net * export_tariff * -1
         elif net > 0:
             reward = net * import_tariff * -1
@@ -279,6 +304,7 @@ class HomerEnv(gym.Env):
                 ac = 'Discharging!'
             else:
                 ac = 'Standby'
+                
             title = str(f'Step: {self._current_tick}'
                     f'Action: {ac} Net Energy: {self.net:.4f} kW'
                     f"\nStep Reward: \${self.reward:.2f},"
@@ -310,10 +336,8 @@ class HomerEnv(gym.Env):
         # Enumerate column indx - useful for indexing later 
         self.idx = {k: v for v, k in enumerate(self.df.columns)}
         # Full data array
-        self.data_arr = self.df.to_numpy(copy=True, dtype=np.float32)
-
+        self.data_arr = self.df.to_numpy(copy=False, dtype=np.float32)
+        #self.data_arr = self.df.to_numpy(copy=True, dtype=np.float32)
         
     def seed(self, seed):
         np.random.seed(seed)
-
-
