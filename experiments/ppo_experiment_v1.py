@@ -276,13 +276,14 @@ def train_agent(config, logger, log_path):
 def do_eval(config, policy, test_collector):
 
     policy.eval()
-    result = test_collector.collect(
-        n_episode=config.eval_n_episode, 
-        render=False
-        )
-    print(f"Final reward: {result['rews'].mean()},"
-          f" length: {result['lens'].mean()}")
-    print(result)
+    for repeat in range(config.eval_n_repeats):
+        result = test_collector.collect(
+            n_episode=test_collector.env_num, 
+            render=False
+            )
+        print(f"Final reward: {result['rews'].mean()},"
+            f" length: {result['lens'].mean()}")
+        print(result)
 
 def load_homer_env(config, data_subset, example=False):
 

@@ -31,6 +31,7 @@ class DataLoader():
                 config.max_devices > 0):
                 self.n_devices = config.max_devices
             else:
+                print('Invalid input, defaulting to number of found devices')
                 self.n_devices = len(self.device_list)
             print(f"Found {self.n_devices} devices")
         
