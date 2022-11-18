@@ -59,7 +59,7 @@ def main(args):
         print(f"New directory was created at '{log_path}'")
     print(f"Logging to '{log_path}'")
 
-    if args.sweep == 'True':
+    if args.sweep:
         print('sweep!')
         """
         #Wandb sweep integration. 
@@ -93,18 +93,35 @@ def main(args):
         writer.add_text("args", str(config))
         logger.load(writer)
     
-    run_experiment(config, logger, log_path)
+    policy = None
+    test_collector = None
+    if config.do_train:
+        print('Running Taining')
+        policy, test_collector = train_agent(config, logger, log_path)
 
     # Close wandb logging
     logger.wandb_run.finish()
 
+    if config.do_eval and not args.sweep:
+        # Do eval
+        if policy is None or test_collector is None:
+            print(
+                'No Policy or Collector loaded! Run training.\n'
+                '!!! Skipping evaluation loop !!!')
+        else:
+            print('Running evaluation')
+            do_eval(config, policy, test_collector)
+    elif not config.do_eval or args.sweep:
+        print('!!! Skipping evaluation loop !!!')
+
+    print('Run completed successfully')
     
 def load_settings(file):
     with open(file, 'r') as f:
         settings = json.load(f)
     return settings
-            
-def run_experiment(config, logger, log_path):
+
+def train_agent(config, logger, log_path):
     
     # Check hardware device:
     log_path = log_path
@@ -157,12 +174,9 @@ def run_experiment(config, logger, log_path):
         # decay learning rate to 0 linearly
         max_update_num = np.ceil(
             config.steps_per_epoch / config.steps_per_collect
-        ) * config.n_max_epochs
-
+            ) * config.n_max_epochs
         lr_scheduler = LambdaLR(
-            optim, lr_lambda=lambda epoch: 1 - epoch / max_update_num
-        )
-
+            optim, lr_lambda=lambda epoch: 1 - epoch / max_update_num)
 
     # Since environment action space is discrete 
     def dist(p):
@@ -220,13 +234,13 @@ def run_experiment(config, logger, log_path):
         exploration_noise=True
     )
     
-    print(f"Testing train_collector and start filling replay buffer")
+    print(f"Testing train_collector, filling replay buffer")
     train_collector.collect(
         n_step=config.batch_size * config.training_num
     )
     print("Done")
     def save_best_fn(policy):
-        best_pth = os.path.join(log_path, "policy.pth")
+        best_pth = os.path.join(log_path, "best_policy.pth")
         torch.save(policy.state_dict(), best_pth)
         print(f"Best policy saved to {best_pth}")
 
@@ -257,6 +271,18 @@ def run_experiment(config, logger, log_path):
     )
     print("Training complete")
     print(result)
+    return policy, test_collector
+
+def do_eval(config, policy, test_collector):
+
+    policy.eval()
+    result = test_collector.collect(
+        n_episode=config.eval_n_episode, 
+        render=False
+        )
+    print(f"Final reward: {result['rews'].mean()},"
+          f" length: {result['lens'].mean()}")
+    print(result)
 
 def load_homer_env(config, data_subset, example=False):
 
@@ -264,11 +290,12 @@ def load_homer_env(config, data_subset, example=False):
 
     if config.pricing_env == 'dummy':
         if example:
-            envs =  HomerEnv(data=file_loader.load_dummy_data(), 
-                             start_soc=config.start_soc, 
-                             discrete=config.discrete_env,
-                             charge_rate=config.charge_rate,
-                             action_intervals=config.action_intervals)   
+            envs =  HomerEnv(
+                    data=file_loader.load_dummy_data(), 
+                    start_soc=config.start_soc, 
+                    discrete=config.discrete_env,
+                    charge_rate=config.charge_rate,
+                    action_intervals=config.action_intervals)   
         else:
             envs = SubprocVectorEnv(
                 [lambda: HomerEnv(
@@ -282,14 +309,14 @@ def load_homer_env(config, data_subset, example=False):
 
     elif config.pricing_env == 'simple':
         device_list = file_loader.device_list
-
         if example:
             # Load a single example to get env dimensions.
-            envs =  HomerEnv(data=file_loader.load_device(device_list[0]), 
-                             start_soc=config.start_soc, 
-                             discrete=config.discrete_env,
-                             charge_rate=config.charge_rate,
-                             action_intervals=config.action_intervals) 
+            envs =  HomerEnv(
+                    data=file_loader.load_device(device_list[0]), 
+                    start_soc=config.start_soc, 
+                    discrete=config.discrete_env,
+                    charge_rate=config.charge_rate,
+                    action_intervals=config.action_intervals) 
         else:
             n_devices = file_loader.n_devices
             # Something about lambda closures https://discuss.python.org/t/make-lambdas-proper-closures/10553
@@ -326,10 +353,10 @@ if __name__ == "__main__":
         '--file', help='json file with all arguments', type=str)
     parser.add_argument(
         '--debug', help='Ture/False for debug mode', 
-        default="False", type=str)
+        action=argparse.BooleanOptionalAction)
     parser.add_argument(
         '--sweep', help= 'Ture/False for WandB sweep', 
-        default="False", type=str)
+        action=argparse.BooleanOptionalAction)
     parser.add_argument(
         "--device", type=str, 
         default="cuda" if torch.cuda.is_available() else "cpu")

@@ -27,7 +27,8 @@ class DataLoader():
             
         elif config.pricing_env == 'simple':   
             self.device_list = self.load_device_list(self)
-            if config.max_devices <= len(self.device_list):
+            if (config.max_devices <= len(self.device_list) and 
+                config.max_devices > 0):
                 self.n_devices = config.max_devices
             else:
                 self.n_devices = len(self.device_list)
