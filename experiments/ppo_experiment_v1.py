@@ -264,24 +264,25 @@ def load_homer_env(config, data_subset, example=False):
 
     if config.pricing_env == 'dummy':
         if example:
-            envs =  HomerEnv(data=file_loader.load_dummy_data().copy(), 
+            envs =  HomerEnv(data=file_loader.load_dummy_data(), 
                              start_soc=config.start_soc, 
                              discrete=config.discrete_env,
-                             charge_rate=config.charge_rate)  
+                             charge_rate=config.charge_rate,
+                             action_intervals=config.action_intervals)   
         else:
             envs = SubprocVectorEnv(
-                [
-                    lambda: HomerEnv(data=file_loader.load_dummy_data(), 
-                                    start_soc=config.start_soc, 
-                                    discrete=config.discrete_env,
-                                    charge_rate=config.charge_rate,
-                                    action_intervals=config.action_intervals)   
-                        for i in range(config.n_dummy_envs)
-                ]
+                [lambda: HomerEnv(
+                    data=file_loader.load_dummy_data(), 
+                    start_soc=config.start_soc, 
+                    discrete=config.discrete_env,
+                    charge_rate=config.charge_rate,
+                    action_intervals=config.action_intervals) 
+                for i in range(config.n_dummy_envs)]
             )
 
     elif config.pricing_env == 'simple':
         device_list = file_loader.device_list
+
         if example:
             # Load a single example to get env dimensions.
             envs =  HomerEnv(data=file_loader.load_device(device_list[0]), 
@@ -291,13 +292,17 @@ def load_homer_env(config, data_subset, example=False):
                              action_intervals=config.action_intervals) 
         else:
             n_devices = file_loader.n_devices
-            # Some weird thing about lambda closures https://discuss.python.org/t/make-lambdas-proper-closures/10553
+            # Something about lambda closures https://discuss.python.org/t/make-lambdas-proper-closures/10553
             env_list = [
                 lambda i=i: HomerEnv(
-                    data=file_loader.load_device(device_list[i]), 
+                    data=file_loader.load_device(device_list[i], 
+                                                 truncate=config.truncate, 
+                                                 max_days=config.n_days,
+                                                 val_offset=config.val_offset), 
                     start_soc=config.start_soc, 
                     discrete=config.discrete_env,
-                    charge_rate=config.charge_rate) 
+                    charge_rate=config.charge_rate,
+                    action_intervals=config.action_intervals) 
                 for i in range(n_devices)]            
             
             envs = SubprocVectorEnv(env_list)

@@ -16,11 +16,7 @@ import os
 import gym
 from gym import spaces
 
-from models.battery_simulator import (
-    battery, 
-    BatteryOverflowError, 
-    BatteryOverdrawError
-)
+from models.battery_simulator import battery
 
 class Actions(Enum):
     Charge = 2
@@ -51,6 +47,8 @@ class HomerEnv(gym.Env):
         self.importable = True
         self.e_flux = None 
         self.net = None 
+        self.charge_rate = charge_rate
+        self.discharge_rate = charge_rate
 
         # Episode 
         self.start_tick = 0
@@ -101,7 +99,7 @@ class HomerEnv(gym.Env):
                                importable=self.importable, 
                                exportable=self.exportable, 
                                charge_rate=self.charge_rate, 
-                               discharge_rate=self.charge_rate)
+                               discharge_rate=self.discharge_rate)
 
         # Set first and last tick
         self._current_tick = self.start_tick

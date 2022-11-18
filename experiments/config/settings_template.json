@@ -1,8 +1,8 @@
 {
     "debug": true,
     "sweep": false,
-    "start_soc": "random",
-    "pricing_env": "full", 
+    "start_soc": "full",
+    "pricing_env": "simple", 
     "discrete_env": false,
     "n_dummy_envs": 10,
     "log_path":"logs",
@@ -40,5 +40,8 @@
     "frames_stack":4,
     "max_devices":3,
     "charge_rate":5,
-    "action_intervals":10
+    "action_intervals":10,
+    "truncate":true,
+    "n_days":90,
+    "val_offset":10
 }
