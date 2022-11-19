@@ -29,3 +29,4 @@ experiments/config/templates/.ipynb_checkpoints/
 logs/
 experiments/wandb/
 notebooks/log/*
+/data/data_simple/
