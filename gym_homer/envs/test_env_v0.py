@@ -335,5 +335,3 @@ class HomerEnv(gym.Env):
         
     def seed(self, seed):
         np.random.seed(seed)
-
-
