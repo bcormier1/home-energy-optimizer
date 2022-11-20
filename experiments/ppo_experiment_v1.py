@@ -58,6 +58,7 @@ def main(args):
         os.makedirs(log_path)
         print(f"New directory was created at '{log_path}'")
     print(f"Logging to '{log_path}'")
+    setattr(config, "result_path", log_path)
 
     if args.sweep:
         print('sweep!')
@@ -112,7 +113,7 @@ def main(args):
             print('Running evaluation')
             do_eval(config, policy, test_collector)
     elif not config.do_eval or args.sweep:
-        print('!!! Skipping evaluation loop !!!')
+        print('!! Skipping evaluation loop !!')
 
     print('Run completed successfully')
     
@@ -130,19 +131,17 @@ def train_agent(config, logger, log_path):
     
     # Make environments:
     print(f"Loading environments.")
-    train_envs = load_homer_env(config, 'train')  
+    train_envs, _ = load_homer_env(config, 'train')  
     print("Loaded train Enironments")
-    test_envs = load_homer_env(config, 'validation')
+    test_envs, _ = load_homer_env(config, 'validation')
     print("Loaded validation environments")
 
     
     # Define Network
-    env = load_homer_env(config, 'train', True) 
+    env, _ = load_homer_env(config, 'train', True) 
     if config.parameterised_mlp:
-        print(
-            f"Loading parameterised network with {config.n_hidden_layers}"
-            f" hidden layers, each with {config.hidden_layer_dims} neurons"
-            )
+        print(f"Loading parameterised network with {config.n_hidden_layers}"
+              f" hidden layers, each with {config.hidden_layer_dims} neurons")
         hidden_sizes = [
             config.hidden_layer_dims for dim in range(config.n_hidden_layers)
         ]
@@ -150,12 +149,14 @@ def train_agent(config, logger, log_path):
         print(f"Loading network with dimension{config.hidden_sizes}")
         hidden_sizes = config.hidden_sizes
     
+    obs_shape = env.observation_space.shape or env.observation_space.n
+    action_shape = env.action_space.shape or env.action_space.n
+    
     net = Net(
-        env.observation_space.shape, 
+        obs_shape, 
         hidden_sizes=hidden_sizes, 
         device=device
     )
-    action_shape = env.action_space.shape or env.action_space.n
     
     print(f"Environment Action space: {env.action_space}")
     print(f"Environment Action shape: {action_shape}")
@@ -176,7 +177,8 @@ def train_agent(config, logger, log_path):
             config.steps_per_epoch / config.steps_per_collect
             ) * config.n_max_epochs
         lr_scheduler = LambdaLR(
-            optim, lr_lambda=lambda epoch: 1 - epoch / max_update_num)
+            optim, lr_lambda=lambda epoch: 1 - epoch / max_update_num
+        )
 
     # Since environment action space is discrete 
     def dist(p):
@@ -269,58 +271,108 @@ def train_agent(config, logger, log_path):
         resume_from_log=config.resume_id is not None,
         save_checkpoint_fn=save_checkpoint_fn,
     )
-    print("Training complete")
+    print("Training complete.\nSummary:\n")
     print(result)
     return policy, test_collector
 
 def do_eval(config, policy, test_collector):
-
-    policy.eval()
+    
+    # Create test envs
+    test_envs, device_list = load_homer_env(config, 'test')
+    print("Loaded test environments")
+    
+    # Load test collector with new test envs. 
+    
+    if config.save_test_data:
+        print(f"Logging Output to {config.result_path}")
+    else:
+        print("Not logging.")
+    
+    df_list = []
     for repeat in range(config.eval_n_repeats):
+        # Load test collector with new test envs. 
+        test_collector = Collector(
+            policy, 
+            test_envs,
+            exploration_noise=True
+        )
+        policy.eval()
         result = test_collector.collect(
             n_episode=test_collector.env_num, 
             render=False
-            )
-        print(f"Final reward: {result['rews'].mean()},"
-            f" length: {result['lens'].mean()}")
-        print(result)
+        )
+        print(
+            f"Repeat: {repeat} "
+            f"Final reward: {result['rews'].mean():.4f},"
+            f" length: {result['lens'].mean():.4f}\n"
+            f"{result}"
+        )
+        
+        # Build dict:
+        if config.save_test_data:
+            result_dict = {
+                "repeat": np.ones(result["n/ep"])*repeat,
+                "deviceid": np.array(device_list)[result['idxs']],
+                "steps": result["lens"],
+                "reward": result["rews"]
+            }
+            df_list.append(pd.DataFrame(result_dict))
+ 
+    if config.save_test_data:
+        summary_dict = pd.concat(df_list)
+        pth = config.result_path+"/aggregated_result_summary.csv"
+        print(f"saving to {pth}")
+        summary_dict.to_csv(pth, index=False)
 
 def load_homer_env(config, data_subset, example=False):
 
     file_loader = DataLoader(config, data_subset)
+    
+    # If test, we need to supply the save data
+    if data_subset == 'test' and config.save_test_data:
+        history = config.save_test_data
+        result_path = config.result_path 
+    else: #Don't save. 
+        history = False
+        result_path = ""
 
     if config.pricing_env == 'dummy':
+        device_list = ['dummy' for _ in range(config.n_dummy_envs)]
         if example:
             envs =  HomerEnv(
-                    data=file_loader.load_dummy_data(), 
-                    start_soc=config.start_soc, 
-                    discrete=config.discrete_env,
-                    charge_rate=config.charge_rate,
-                    action_intervals=config.action_intervals)   
+                data=file_loader.load_dummy_data(), 
+                start_soc=config.start_soc, 
+                discrete=config.discrete_env,
+                capacity=10,
+                charge_rate=12,
+                action_intervals=config.action_intervals
+            )   
         else:
             envs = SubprocVectorEnv(
                 [lambda: HomerEnv(
                     data=file_loader.load_dummy_data(), 
                     start_soc=config.start_soc, 
                     discrete=config.discrete_env,
-                    charge_rate=config.charge_rate,
-                    action_intervals=config.action_intervals) 
+                    capacity=10,
+                    charge_rate=12,
+                    action_intervals=config.action_intervals,
+                    save_history=history,
+                    save_path=result_path) 
                 for i in range(config.n_dummy_envs)]
             )
-
     elif config.pricing_env == 'simple':
         device_list = file_loader.device_list
         if example:
             # Load a single example to get env dimensions.
             envs =  HomerEnv(
-                    data=file_loader.load_device(device_list[0]), 
-                    start_soc=config.start_soc, 
-                    discrete=config.discrete_env,
-                    charge_rate=config.charge_rate,
-                    action_intervals=config.action_intervals) 
+                data=file_loader.load_device(device_list[0]), 
+                start_soc=config.start_soc, 
+                discrete=config.discrete_env,
+                charge_rate=config.charge_rate,
+                action_intervals=config.action_intervals
+            ) 
         else:
             n_devices = file_loader.n_devices
-            # Something about lambda closures https://discuss.python.org/t/make-lambdas-proper-closures/10553
             env_list = [
                 lambda i=i: HomerEnv(
                     data=file_loader.load_device(device_list[i], 
@@ -330,20 +382,22 @@ def load_homer_env(config, data_subset, example=False):
                     start_soc=config.start_soc, 
                     discrete=config.discrete_env,
                     charge_rate=config.charge_rate,
-                    action_intervals=config.action_intervals) 
-                for i in range(n_devices)]            
-            
+                    action_intervals=config.action_intervals,
+                    save_history=history,
+                    save_path=result_path,
+                    device_id=device_list[i]
+                ) for i in range(n_devices)
+            ]            
             envs = SubprocVectorEnv(env_list)
             print(f"Sucessfully loaded {n_devices} environments")
     
     elif config.pricing_env == 'complex':
-        raise NotImplementedError
-    
+        raise NotImplementedError    
     else:
         print(f"Invalid value for pricing_env: {config.pricing_env}")
         raise Exception
 
-    return envs
+    return envs, device_list
 
 if __name__ == "__main__":
     
@@ -363,5 +417,4 @@ if __name__ == "__main__":
         default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
     
-    # Run
     main(args)
