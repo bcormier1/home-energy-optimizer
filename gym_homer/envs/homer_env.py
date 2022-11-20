@@ -72,7 +72,7 @@ class HomerEnv(gym.Env):
         # Pseudo continuous with n=action_intervals fractional increments for
         # charge/discharge amounts. 
         else:
-            self.action_space = spaces.Discrete(2*self.action_intervals, start=0)
+            self.action_space = spaces.Discrete((2*self.action_intervals)+1, start=0)
 
         ## Observation Spaces
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, 
