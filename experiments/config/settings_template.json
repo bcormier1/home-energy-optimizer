@@ -44,5 +44,6 @@
     "truncate":true,
     "n_days":null,
     "val_offset":10,
-    "eval_n_repeats":1
+    "eval_n_repeats":1,
+    "save_test_data":true
 }

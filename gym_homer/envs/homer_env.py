@@ -15,6 +15,7 @@ from enum import Enum
 import os
 import gym
 from gym import spaces
+import pandas as pd
 
 from models.battery_simulator import battery
 
@@ -27,16 +28,19 @@ class HomerEnv(gym.Env):
     """Home Energy Management Environment that follows gym interface"""
     metadata = {'render_modes': ['human'], "render_fps": 4}
 
-    def __init__(self, capacity=10, start_soc='full', render_mode=None, 
-    discrete=True, data=None, charge_rate=5, action_intervals=10) -> None:
+    def __init__(self, capacity=14, start_soc='full', render_mode=None, 
+        discrete=True, data=None, charge_rate=5, action_intervals=10, 
+        save_history=False, save_path="") -> None:
 
         """
-        TODO: Update docstring.
+        Initialises a HOMER Env.
         """     
         # Set data and devices
         self.discrete=discrete
         self.df=data   
         self._process_data()
+        self.save_history=save_history
+        self.save_path=save_path
 
         self.action_intervals = action_intervals
 
@@ -60,9 +64,6 @@ class HomerEnv(gym.Env):
 
         # Rendering
         self._first_rendering = None
-
-        # Data Structure for Logging
-        self.history = None
            
         ## Action Spaces
         if self.discrete:
@@ -90,8 +91,11 @@ class HomerEnv(gym.Env):
         # We need the following line to seed self.np_random
         super().reset(seed=seed)
 
-        #Reset reward
+        #Reset reward and history
+        # AT - do we need to overwrite the data_arr?
         self.cumulative_reward = 0
+        self.history = None
+        self.updated_action=None
 
         #Reset battery in line with initial operating conditions.
         self.battery = battery(capacity=self.start_capacity, 
@@ -140,9 +144,10 @@ class HomerEnv(gym.Env):
                 action
             )
         else:
-            action = (action - self.action_intervals) / self.action_intervals
+            
+            self.updated_action = (action - self.action_intervals) / self.action_intervals
             self.net, self.e_flux = self._apply_action(
-                action, 
+                self.updated_action, 
                 obs[self.idx['loads']] + obs[self.idx['solar']]
             )
 
@@ -160,6 +165,10 @@ class HomerEnv(gym.Env):
         info = self._get_info()
         self._log_step(info)
 
+        # Save output dataframe.
+        if done and self.save_history:
+            self.save_results()
+        
         if self.render_mode == "human":
             self._render_frame()
 
@@ -180,9 +189,10 @@ class HomerEnv(gym.Env):
             obs[self.idx['max_c']], 
             self.action)
         # Caclulate Reward        
-        self.reward = self._calculate_reward(self.net, 
-                                            obs[self.idx['export_tariff']], 
-                                            obs[self.idx['import_tariff']])
+        self.reward = self._calculate_reward(
+            self.net, 
+            obs[self.idx['export_tariff']], 
+            obs[self.idx['import_tariff']])
         self.cumulative_reward += self.reward 
 
     def _get_obs(self) -> np.ndarray:
@@ -211,8 +221,16 @@ class HomerEnv(gym.Env):
         """ 
         translates the environments state into an observation
         """
-        return {"reward": self.reward, "net": self.net, "action":self.action,
-                "bat_output": self.e_flux}
+        info_dict = {
+            "tick": self._current_tick,
+            "reward": self.reward, 
+            "net": self.net, 
+            "action":self.action,
+            "updated_action":self.updated_action,
+            "bat_output": self.e_flux, 
+            "cumulative_reward":self.cumulative_reward
+        }
+        return info_dict
     
     def _log_step(self, info) -> None:
         """
@@ -229,39 +247,42 @@ class HomerEnv(gym.Env):
         # Calculate Grid State, Update Battery state
         if action == Actions.Charge.value:
             net = loads + solar + (max_c)
-            self.battery.charge(max_c)
-            e_flux = max_c
+            _, e_flux, _ = self.battery.charge(max_c)
+            if e_flux < 0:
+                raise Exception
+            #e_flux = max_c
         elif action == Actions.Discharge.value:
             net = loads + solar + (max_d)
-            self.battery.discharge(max_d)
-            e_flux = max_d
+            _, e_flux, _ = self.battery.discharge(max_d)
+            if e_flux > 0:
+                raise Exception
+            #e_flux = max_d
         elif action == Actions.Standby.value:
             net = loads + solar
             e_flux = 0
         else:
-            raise Exception(f'Action not recognised!'
-                        '{action}, d{max_d}, c{max_c}')
+            raise Exception(f'Action not recognised! a{action}, d{max_d}, c{max_c}')
         return net, e_flux
 
     def _apply_action(self,action, home):
         if action > 0:
             charge_request = action * self.battery.max_input
-            e_flux, _ = self.battery.charge(charge_request)
-            net = home + e_flux
+            _, e_flux, _ = self.battery.charge(charge_request)
         else:
             discharge_request = action * self.battery.max_output
-            e_flux, _ = self.battery.discharge(discharge_request)
-            net = home + e_flux
+            _, e_flux, _ = self.battery.discharge(discharge_request)
+        
+        net = home + e_flux
         return net, e_flux
 
     def _calculate_reward(self, net, export_tariff, import_tariff) -> float:
         # Calculate reward
         if net < 0:
-            if export_tariff < 0:
-                export_tariff *= -1
-            reward = net * export_tariff * -1
+            reward = net * export_tariff
+            reward = reward if reward > 0 else reward * -1
         elif net > 0:
-            reward = net * import_tariff * -1
+            reward = net * import_tariff
+            reward = reward if reward < 0 else reward * -1
         else:
             reward = 0
         return float(reward)
@@ -321,10 +342,19 @@ class HomerEnv(gym.Env):
                 f"Action : {self.history['action'][self._current_tick]}")
 
     def close(self) -> None:
+        
         plt.close()
 
     def save_rendering(self, filepath) -> None:
         plt.savefig(f'{filepath}_{str(self._current_tick)}.png')
+        
+    def save_results(self):
+        
+        #Save
+        obs = pd.DataFrame(data=self.data_arr, columns=self.df.columns)
+        info = pd.DataFrame(self.history)
+        results = pd.merge(obs, info, left_index=True, right_index=True)
+        results.to_csv(self.save_path+"/results_array.csv")
     
     def _process_data(self) -> None:
         """
@@ -334,8 +364,7 @@ class HomerEnv(gym.Env):
         # Enumerate column indx - useful for indexing later 
         self.idx = {k: v for v, k in enumerate(self.df.columns)}
         # Full data array
-        self.data_arr = self.df.to_numpy(copy=False, dtype=np.float32)
-        #self.data_arr = self.df.to_numpy(copy=True, dtype=np.float32)
+        self.data_arr = self.df.to_numpy(copy=True, dtype=np.float32)
         
     def seed(self, seed):
         np.random.seed(seed)

@@ -33,27 +33,38 @@ class battery:
     interval: int # The action interval in minutes. 
     battery_limits: tuple # Upper and lower bounds for battery operation in kWh. 
 
-    def __init__(self, capacity=14, start_soc = 'full', importable=False, 
-                 exportable = False, charge_rate=5, discharge_rate=5, 
-                 round_trip_efficiency=0.9, solar_present=True) -> None:
+    def __init__(
+        self, 
+        capacity=14, 
+        start_soc = 'full', 
+        importable=False, 
+        exportable = False, 
+        charge_rate=5, 
+        discharge_rate=5, 
+        round_trip_efficiency=0.9, 
+        solar_present=True,
+        resolve_requests=True
+    ) -> None:
         """
         Initialize battery specs.
         `capacity` is the total current energy capacity of the battery in kWh        
         `exportable` represents if the battery can send it's power back to 
             the optimizer for use in another purpose.  
             For example a car cannot do this while a wall battery can.
-            
+        `start_soc` is the starting charge level of capacity. 
         `importable` represents if the battery can pull power from the grid in order to charge. If not,
             it can only be charged by excecss solar. Must be True if solar_present is false. 
-        `charge_rate` is the rate of battery charging in kW
-        `discharge_rate` is the rate of battery discharge (if applicable) in kW
-        
+        `charge_rate` is the max rate of battery charging in kW
+        `discharge_rate` is the max rate of battery discharge (if applicable) in kW
         `round_trip_efficiency` is the Percentage of energy recoverable from each unit of input energy
-        
         `solar_present` indicates whether a solar system is connected (True) or not (False)
+        `resolve_requests` indicates whether the battery will permit charge/discharge rates outside of the
+            maximum allowable charge/discharge limits by automatically resolving the max possible, 
+            or else raise an error.
                
         """
         
+        self.resolve_requests = resolve_requests
         self.capacity = capacity
         self.exportable = exportable
         self.importable = importable
@@ -117,11 +128,12 @@ class battery:
         }
     
   
-    def charge(self, input_energy) -> Tuple[float, float]:        
+    def charge(self, input_energy) -> Tuple[float, float, float]:        
         """
         Charge the battery with the given input energy amount in kWh.
         The actual amount the capacity changes is less than the input
-        energy since there are efficiency losses
+        energy since there are efficiency losses. If resolve_requests=False,
+        then an overflow error will occur, and no energy will be delivered. 
         
         input:
             input_energy (float): The energy to be input into the battery in 
@@ -130,33 +142,42 @@ class battery:
         return:
             net_input (float): The amount of energy added to the battery 
                 capacity via charging, taking into account charging losses.
+            input_energy (float): The amount of energy supplied to the battery,
+                not taking into account charging losses.
             avl_energy (float): The updated current capacity of the battery 
                 available for use in kWh after  charging is completed.
         """       
         if input_energy < 0:
             raise ValueError(f'Non-positive input! {input_energy}')
         elif input_energy == 0: #Skip
-            return 0, self.avl_energy
+            return 0, 0, self.avl_energy
         
-        available_capacity = self.get_charge_potential()
+        # Get charge potential - the max amount we could feed into the battery
+        charge_potential = self.get_charge_potential()
         
-        if abs(input_energy - available_capacity) < self.eps:
-            input_energy = available_capacity        
-
-        if input_energy * self.charge_loss > available_capacity:
-            # Need to clip the energy input to max allowable.
-            net_input = available_capacity
-        else:
-            # Calculate the actual amount decremented
-            net_input = input_energy * self.charge_loss
+        if abs(input_energy - charge_potential) < self.eps:
+            input_energy = charge_potential        
+        
+        # Handle requests above the charge potential.
+        if input_energy > charge_potential:
+            # Need to limit the energy input to max allowable or raise error
+            if self.resolve_requests == False:
+                raise BatteryOverflowError()
+                return 0, 0, self.avl_energy
+            else:
+                input_energy = charge_potential
+        
+        # Calculate the actual amount delivered
+        net_input = input_energy * self.charge_loss
+        
         # Update capacity and decrement capacity
         self.avl_energy += net_input
         self.update_capacity_degredation(net_input)
         self.soc = self.avl_energy / self.capacity
             
-        return net_input, self.avl_energy
+        return net_input, input_energy, self.avl_energy
            
-    def discharge(self, output_energy) -> Tuple[float, float]:
+    def discharge(self, output_energy) -> Tuple[float, float, float]:
         """
         Discharges energy = output_energy from the battery in kWh. 
         Decrements the capacity taking into account the discharge losses,
@@ -175,26 +196,30 @@ class battery:
         if output_energy > 0:
             raise ValueError(f'Non-negative input! {output_energy}')
         elif output_energy == 0: #Skip 
-            return 0, self.avl_energy 
+            return 0, 0, self.avl_energy 
 
-        available_capacity = self.get_discharge_potential()      
+        discharge_potential = self.get_discharge_potential() # returns positive.     
         # avoid fp error
-        if abs(output_energy - available_capacity) < self.eps:
-            output_energy = available_capacity
+        if abs(output_energy + discharge_potential) < self.eps:
+            output_energy = discharge_potential * -1
 
-
-        if output_energy / self.discharge_loss > available_capacity:
-            full_decrement = available_capacity
-        else:
-            # Calculate the full amout required to be extracted including losses
-            full_decrement = output_energy / self.discharge_loss
+        if abs(output_energy) > discharge_potential:
+            # Need to limit the energy input to max allowable or raise error
+            if self.resolve_requests == False:
+                raise BatteryOverdrawError()
+                return 0, 0, self.avl_energy
+            else:
+                output_energy = discharge_potential * -1
+            
+        # Calculate the full amout required to be extracted including losses
+        full_decrement = output_energy / self.discharge_loss
         
         # Discharge battery, update capacity decrement
         self.avl_energy += full_decrement
-        self.update_capacity_degredation(full_decrement)
+        self.update_capacity_degredation(abs(full_decrement))
         self.soc = self.avl_energy / self.capacity
             
-        return full_decrement, self.avl_energy 
+        return full_decrement, output_energy, self.avl_energy 
        
     def update_capacity_degredation(self, energy):        
         """
