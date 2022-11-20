@@ -30,7 +30,7 @@ class HomerEnv(gym.Env):
 
     def __init__(self, capacity=14, start_soc='full', render_mode=None, 
         discrete=True, data=None, charge_rate=5, action_intervals=10, 
-        save_history=False, save_path="") -> None:
+        save_history=False, save_path="", device_id=None) -> None:
 
         """
         Initialises a HOMER Env.
@@ -41,6 +41,7 @@ class HomerEnv(gym.Env):
         self._process_data()
         self.save_history=save_history
         self.save_path=save_path
+        self.device_id=device_id
 
         self.action_intervals = action_intervals
 
@@ -354,7 +355,11 @@ class HomerEnv(gym.Env):
         obs = pd.DataFrame(data=self.data_arr, columns=self.df.columns)
         info = pd.DataFrame(self.history)
         results = pd.merge(obs, info, left_index=True, right_index=True)
-        results.to_csv(self.save_path+"/results_array.csv")
+        # Note for repetitions this will overwrite previous repetitions.
+        device = self.device_id if self.device_id != None else "dummy"
+        results.to_csv(
+            self.save_path+f"/{device}_results_array.csv", index=False
+        )
     
     def _process_data(self) -> None:
         """
