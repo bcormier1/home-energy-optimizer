@@ -145,7 +145,6 @@ class HomerEnv(gym.Env):
                 action
             )
         else:
-            
             self.updated_action = (action - self.action_intervals) / self.action_intervals
             self.net, self.e_flux = self._apply_action(
                 self.updated_action, 
