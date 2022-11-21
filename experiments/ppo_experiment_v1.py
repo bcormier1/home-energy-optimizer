@@ -6,6 +6,7 @@ import json
 import argparse
 import torch
 import datetime
+import wandb
 
 #set working dir and path. 
 parent_dir = os.getcwd()
@@ -59,40 +60,31 @@ def main(args):
         print(f"New directory was created at '{log_path}'")
     print(f"Logging to '{log_path}'")
     setattr(config, "result_path", log_path)
-
+    
+    logger = WandbLogger(
+        save_interval=1000,
+        #run_id=settings.get('run_id',None),
+        #name=settings.get('run_name',None),
+        project="RL_project", 
+        entity="w266_wra",
+        config=settings
+        )
+    writer = SummaryWriter(config.log_path)
+    writer.add_text("args", str(config))
+    logger.load(writer)
+    
     if args.sweep:
-        print('sweep!')
-        """
-        #Wandb sweep integration. 
-        wandb.init( entity="w266_wra", config=settings)
-        config = wandb.config
-        for item in config.items():
+        print('Running sweep!')
+        #Hacky wandb sweep integration. 
+        wandb_config = logger.wandb_run.config
+        for item in wandb_config.items():
             wandb_key = item[0]
             wandb_val = item[1]
             if wandb_key in settings.keys():
                 settings[wandb_key] = wandb_val
             else:
                 settings.update({wandb_key: wandb_val})
-            print(f"Sweep Argument Check: {wandb_key}: {settings[wandb_key]}\n")
-
-        #Get time for unique folder
-        run_start = datetime.now()
-        start_time = run_start.strftime("%Y%b%d_%H%M%S")
-        settings['output_dir'] = settings['output_dir']+f"/{wandb.run.name}_{wandb.run.id}_{start_time}"
-        """
-    else:
-        # upload to wandb
-        logger = WandbLogger(
-            save_interval=1,
-            #run_id=settings.get('run_id',None),
-            #name=settings.get('run_name',None),
-            project="RL_project", 
-            entity="w266_wra",
-            config=settings
-            )
-        writer = SummaryWriter(config.log_path)
-        writer.add_text("args", str(config))
-        logger.load(writer)
+            print(f"Sweep Argument Check: {wandb_key}: {settings[wandb_key]}")
     
     policy = None
     test_collector = None
@@ -118,6 +110,7 @@ def main(args):
     print('Run completed successfully')
     
 def load_settings(file):
+    print(file)
     with open(file, 'r') as f:
         settings = json.load(f)
     return settings
