@@ -1,0 +1,103 @@
+program: ppo_experiment_v1.py
+command:
+  - ${env}
+  - python
+  - ${program}
+  - "--file"
+  - "config/settings_template.json"
+  - "--sweep"
+method: bayes
+metric:
+  goal: maximize
+  name: train/reward
+parameters:
+  action_intervals:
+    distribution: int_uniform
+    max: 5
+    min: 1
+  batch_size:
+    distribution: int_uniform
+    max: 4096
+    min: 64
+  ent_coef:
+    distribution: uniform
+    max: 0.02
+    min: 0.005
+  eps_clip:
+    distribution: uniform
+    max: 0.4
+    min: 0.1
+  gae_lambda:
+    distribution: uniform
+    max: 1.9
+    min: 0.475
+  gamma:
+    distribution: uniform
+    max: 1.98
+    min: 0.495
+  hidden_layer_dims:
+    distribution: int_uniform
+    max: 512
+    min: 64
+  lr_decay:
+    distribution: categorical
+    values:
+      - "true"
+      - "false"
+  lr_optimizer:
+    distribution: uniform
+    max: 0.001
+    min: 5e-05
+  max_grad_norm:
+    distribution: uniform
+    max: 1
+    min: 0.25
+  n_hidden_layers:
+    distribution: int_uniform
+    max: 6
+    min: 2
+  n_max_epochs:
+    distribution: int_uniform
+    max: 4
+    min: 1
+  parameterised_mlp:
+    distribution: categorical
+    values:
+      - "true"
+  repeat_per_collector:
+    distribution: int_uniform
+    max: 10
+    min: 1
+  replay_buffer_collector:
+    distribution: int_uniform
+    max: 34560
+    min: 8640
+  save_test_data:
+    distribution: categorical
+    values:
+      - "false"
+  start_soc:
+    distribution: categorical
+    values:
+      - full
+      - random
+  steps_per_collect:
+    distribution: int_uniform
+    max: 12960
+    min: 144
+  steps_per_epoch:
+    distribution: int_uniform
+    max: 200000
+    min: 50000
+  task:
+    distribution: categorical
+    values:
+      - Homer_DummyEnv
+  training_num:
+    distribution: int_uniform
+    max: 128
+    min: 32
+  vf_coef:
+    distribution: uniform
+    max: 1
+    min: 0.25
