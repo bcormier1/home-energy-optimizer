@@ -13,7 +13,7 @@
     "hidden_layer_dims": 256,
     "lr_optimizer": 1e-4,
     "replay_buffer_collector": 17280,
-    "n_max_epochs":2,
+    "n_max_epochs":10,
     "repeat_per_collector": 10,
     "test_num": 10,
     "training_num":64,
@@ -38,12 +38,12 @@
     "resume_id":null,
     "algo_name":"ppo",
     "frames_stack":4,
-    "max_devices":10,
+    "max_devices":15,
     "charge_rate":5,
     "action_intervals":1,
     "truncate":true,
     "n_days":null,
     "val_offset":10,
-    "eval_n_repeats":1,
+    "eval_n_repeats":2,
     "save_test_data":true
 }

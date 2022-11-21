@@ -54,6 +54,7 @@ def main(args):
     log_name = os.path.join(config.task, config.algo_name, now)
     log_path = os.path.join(config.log_path, log_name) 
     
+    # Set up directoriesfor logging
     exists = os.path.exists(log_path)
     if not exists:
         os.makedirs(log_path)
@@ -61,6 +62,7 @@ def main(args):
     print(f"Logging to '{log_path}'")
     setattr(config, "result_path", log_path)
     
+    # Initialise the wandb logger
     logger = WandbLogger(
         save_interval=1000,
         #run_id=settings.get('run_id',None),
@@ -75,7 +77,7 @@ def main(args):
     
     if args.sweep:
         print('Running sweep!')
-        #Hacky wandb sweep integration. 
+        # Hacky wandb sweep integration. 
         wandb_config = logger.wandb_run.config
         for item in wandb_config.items():
             wandb_key = item[0]
@@ -88,6 +90,7 @@ def main(args):
     
     policy = None
     test_collector = None
+    
     if config.do_train:
         print('Running Taining')
         policy, test_collector = train_agent(config, logger, log_path)

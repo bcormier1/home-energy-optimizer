@@ -1,0 +1,93 @@
+program: ppo_experiment_v1.py
+command:
+  - ${env}
+  - python
+  - ${program}
+  - "--file"
+  - "config/settings_ppo_sweep.json"
+  - "--sweep"
+method: bayes
+metric:
+  goal: maximize
+  name: train/reward
+parameters:
+  action_intervals:
+    distribution: int_uniform
+    max: 5
+    min: 1
+  batch_size:
+    distribution: int_uniform
+    max: 1024
+    min: 64
+  ent_coef:
+    distribution: uniform
+    max: 0.02
+    min: 0.001
+  eps_clip:
+    distribution: uniform
+    max: 0.6
+    min: 0.05
+  gae_lambda:
+    distribution: uniform
+    max: 1.9
+    min: 0.475
+  gamma:
+    distribution: uniform
+    max: 1.98
+    min: 0.495
+  hidden_layer_dims:
+    values: [32, 64, 128, 256, 512]
+  lr_decay:
+    distribution: categorical
+    values:
+      - "true"
+      - "false"
+  lr_optimizer:
+    distribution: uniform
+    max: 0.001
+    min: 5e-05
+  max_grad_norm:
+    distribution: uniform
+    max: 1
+    min: 0.25
+  n_hidden_layers:
+    distribution: int_uniform
+    max: 12
+    min: 2
+  parameterised_mlp:
+    distribution: categorical
+    values:
+      - "true"
+  repeat_per_collector:
+    distribution: int_uniform
+    max: 10
+    min: 1
+  replay_buffer_collector:
+    distribution: int_uniform
+    max: 34560
+    min: 8640
+  save_test_data:
+    distribution: categorical
+    values:
+      - "false"
+  start_soc:
+    distribution: categorical
+    values:
+      - full
+      - random
+  steps_per_collect:
+    distribution: int_uniform
+    max: 12960
+    min: 144
+  steps_per_epoch:
+    distribution: int_uniform
+    max: 200000
+    min: 10000
+  training_num:
+    distribution: int_uniform
+    max: 128
+    min: 32
+  vf_coef:
+    distribution: uniform
+    max: 1
+    min: 0.25
