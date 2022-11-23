@@ -7,7 +7,7 @@ Authors: Alexander To and Brody Cormier
 Version: v1
 """
 
-
+from datetime import datetime 
 from typing import Any, Dict, Tuple
 import numpy as np
 import matplotlib.pyplot as plt
@@ -34,7 +34,8 @@ class HomerEnv(gym.Env):
 
         """
         Initialises a HOMER Env.
-        """     
+        """
+        self.print_save = False # Whether to print and save unique data summary and actions.  
         # Set data and devices
         self.discrete=discrete
         self.df=data   
@@ -145,6 +146,7 @@ class HomerEnv(gym.Env):
         self.reward = self._calculate_reward(self.net,
                                              obs[self.idx['export_tariff']],
                                              obs[self.idx['import_tariff']])
+
         self.cumulative_reward += self.reward 
 
         # Calculate whether terminated
@@ -241,13 +243,14 @@ class HomerEnv(gym.Env):
     def _calculate_reward(self, net, export_tariff, import_tariff) -> float:
         # Calculate reward
         if net < 0:
-            reward = net * export_tariff
-            reward = reward if reward > 0 else reward * -1
+            tariff = export_tariff if export_tariff < 0 else export_tariff * -1 
+            reward = net * tariff
         elif net > 0:
-            reward = net * import_tariff
-            reward = reward if reward < 0 else reward * -1
+            tariff = import_tariff if import_tariff < 0 else import_tariff * -1
+            reward = net * tariff
         else:
             reward = 0
+            
         return float(reward)
 
     def render(self, mode='human') -> None:
@@ -317,9 +320,15 @@ class HomerEnv(gym.Env):
         results = pd.merge(obs, info, left_index=True, right_index=True)
         # Note for repetitions > 1 this will overwrite previous repetitions.
         device = self.device_id if self.device_id != None else "dummy"
-        results.to_csv(self.save_path+f"/{device}_results_array.csv", 
-                       index=False)
-    
+        if self.print_save:
+            print(results['updated_action'].value_counts())
+            results.to_csv(
+                self.save_path+f"/{device}_results_array_{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}.csv",
+                index=False
+            )
+        else:
+            results.to_csv(self.save_path+f"/{device}_results_array.csv", index=False)
+            
     def _process_data(self) -> None:
         """
         Import data from the passed dataframe into a numpy array. 

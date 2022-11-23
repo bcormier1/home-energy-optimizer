@@ -13,28 +13,28 @@ metric:
 parameters:
   action_intervals:
     distribution: int_uniform
-    max: 5
+    max: 1000
     min: 1
   batch_size:
     distribution: int_uniform
     max: 1024
-    min: 64
+    min: 32
   ent_coef:
     distribution: uniform
-    max: 0.02
-    min: 0.001
+    max: 0.2
+    min: 0
   eps_clip:
     distribution: uniform
     max: 0.6
-    min: 0.05
+    min: 0.01
   gae_lambda:
     distribution: uniform
-    max: 1.9
-    min: 0.475
+    max: 1
+    min: 0.5
   gamma:
     distribution: uniform
-    max: 1.98
-    min: 0.495
+    max: 2
+    min: 1
   hidden_layer_dims:
     values: [32, 64, 128, 256, 512]
   lr_decay:
@@ -45,7 +45,7 @@ parameters:
   lr_optimizer:
     distribution: uniform
     max: 0.001
-    min: 5e-05
+    min: 0.000005
   max_grad_norm:
     distribution: uniform
     max: 1
@@ -66,10 +66,6 @@ parameters:
     distribution: int_uniform
     max: 34560
     min: 8640
-  save_test_data:
-    distribution: categorical
-    values:
-      - "false"
   start_soc:
     distribution: categorical
     values:

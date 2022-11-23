@@ -60,8 +60,10 @@ class DataLoader():
 
         # Handle the validation data, which can be truncated but uses the same
         # Data directory as the train set. 
+        was_valid = False
         offset_validation = None
         if self.subset == "validation":
+            was_valid = True
             offset_validation = val_offset * 12 * 24
             self.subset = "train"
 
@@ -73,15 +75,16 @@ class DataLoader():
         # Truncate the dataset 
         if truncate and max_days is not None:
             steps = max_days * 24 * 12
-            if len(data) <= steps:
-                print("Warning: not enough data! Defaulting to 30 days")
-                steps = 24 * 12 * 30
-            data = data.head(steps)
+            if was_valid == False:
+                if len(data) <= steps:
+                    print("Warning: not enough data! Defaulting to 30 days")
+                    steps = 24 * 12 * 30
+                data = data.head(steps)
         
         # Offset the validation set. 
         if offset_validation is not None:
             # offset the first few values to step the dataset forward in time.
-            data = data.loc[offset_validation:,].copy()
+            data = data.loc[offset_validation:offset_validation+2880,].copy()
         
         print(f"loaded {len(data)} steps from {fname}")
         return data
