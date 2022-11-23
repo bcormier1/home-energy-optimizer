@@ -168,6 +168,12 @@ def train_agent(config, logger, log_path):
     
     actor_critic = ActorCritic(actor, critic)
     
+    # orthogonal initialization required for PPO 
+    for m in actor_critic.modules():
+        if isinstance(m, torch.nn.Linear):
+            torch.nn.init.orthogonal_(m.weight)
+            torch.nn.init.zeros_(m.bias)
+    
     # optimizer of the actor and the critic
     lr_optimizer = config.lr_optimizer
     optim = torch.optim.Adam(actor_critic.parameters(), lr=lr_optimizer)
