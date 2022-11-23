@@ -107,8 +107,7 @@ class ConfigParser():
         Simple class to mimic the argparse package, whereby the keys
         are accessed as attributes.
         """
-        self.config_dict = config_dict
-            
+        self.config_dict = config_dict    
     
      
 

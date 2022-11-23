@@ -320,6 +320,8 @@ class HomerEnv(gym.Env):
         results = pd.merge(obs, info, left_index=True, right_index=True)
         # Note for repetitions > 1 this will overwrite previous repetitions.
         device = self.device_id if self.device_id != None else "dummy"
+        # Add Device Column
+        results.loc[:,'device_id'] = device
         if self.print_save:
             print(results['updated_action'].value_counts())
             results.to_csv(

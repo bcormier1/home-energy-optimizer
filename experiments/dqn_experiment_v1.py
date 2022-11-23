@@ -7,6 +7,7 @@ import argparse
 import torch
 import datetime
 import wandb
+import pickle
 
 #set working dir and path. 
 parent_dir = os.getcwd()
@@ -28,14 +29,13 @@ from torch.utils.tensorboard import SummaryWriter
 from tianshou.utils import WandbLogger
 from tianshou.data import (
     Collector, 
-    VectorReplayBuffer, 
-    AsyncCollector
+    VectorReplayBuffer
 )
 from tianshou.env import SubprocVectorEnv
-from tianshou.policy import DQNPolicy
+from tianshou.policy import RainbowPolicy, DQNPolicy
 from tianshou.trainer import offpolicy_trainer
-from tianshou.utils.net.common import ActorCritic, Net
-from tianshou.utils.net.discrete import Actor, Critic
+from tianshou.utils.net.common import Net
+from tianshou.utils.net.discrete import NoisyLinear
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -145,12 +145,36 @@ def train_agent(config, logger, log_path):
     obs_shape = env.observation_space.shape or env.observation_space.n
     action_shape = env.action_space.shape or env.action_space.n
     
-    net = Net(
-        obs_shape,
-        action_shape,
-        hidden_sizes=hidden_sizes, 
-        device=device
-    )
+    
+    # Define NN parameters
+    def noisy_linear(x, y):
+        return NoisyLinear(x, y, config.noisy_std)
+    
+    if config.algo_name == "rainbow":
+        # Rainbow DQN implementation
+        net = Net(
+            obs_shape,
+            action_shape,
+            hidden_sizes=hidden_sizes,
+            device=device,
+            softmax=True,
+            num_atoms=config.num_atoms,
+            dueling_param=({
+                "linear_layer": noisy_linear
+            }, {
+                "linear_layer": noisy_linear
+            }),
+        )
+    elif config.algo_name == "dqn": 
+        # Vanilla DQN implementation
+        net = Net(
+            obs_shape,
+            action_shape,
+            hidden_sizes=hidden_sizes, 
+            device=device
+        )
+    else:
+        raise Exception(f"Only 'dqn' and 'rainbow' algorithms supported, received {config.algo_name}")
     
     print(f"Environment Action space: {env.action_space}")
     print(f"Environment Action shape: {action_shape}")
@@ -170,16 +194,29 @@ def train_agent(config, logger, log_path):
             optim, lr_lambda=lambda epoch: 1 - epoch / max_update_num
         )
     
-    policy = DQNPolicy(
-        net,
-        optim,
-        discount_factor=config.gamma,
-        estimation_step=config.n_est_steps,
-        target_update_freq=config.target_update_freq,
-        action_space=env.action_space,
-        action_scaling=config.action_scaling,
-        lr_scheduler=lr_scheduler
-    ).to(device)
+    if config.algo_name == "rainbow":
+        policy = RainbowPolicy(
+            net,
+            optim,
+            config.gamma,
+            config.num_atoms,
+            config.v_min,
+            config.v_max,
+            estimation_step=config.n_est_steps,
+            action_space=env.action_space,
+            target_update_freq=config.target_update_freq,
+        ).to(args.device)
+    elif config.algo_name == "dqn":        
+        policy = DQNPolicy(
+            net,
+            optim,
+            discount_factor=config.gamma,
+            estimation_step=config.n_est_steps,
+            target_update_freq=config.target_update_freq,
+            action_space=env.action_space,
+            action_scaling=config.action_scaling,
+            lr_scheduler=lr_scheduler
+        ).to(device)
 
     if config.resume_path:
         print(f"Resuming from path {config.resume_path}")
@@ -220,8 +257,15 @@ def train_agent(config, logger, log_path):
 
     def save_checkpoint_fn(epoch, env_step, gradient_step):
         ckpt_path = os.path.join(log_path, f"checkpoint_{epoch}.pth")
-        torch.save({"model": policy.state_dict()}, ckpt_path)
+        torch.save(
+            {
+                "model": policy.state_dict(), 
+                "optim": optim.state_dict()
+            }, ckpt_path
+        )
         print(f"Checkpoint saved to {ckpt_path}")
+        buffer_path = os.path.join(log_path, f"train_buffer_{epoch}.pkl")
+        pickle.dump(train_collector.buffer, open(buffer_path, "wb"))
         return ckpt_path
     
     # Demo functions from:
@@ -271,7 +315,7 @@ def train_agent(config, logger, log_path):
 def do_eval(config, policy, test_collector):
     
     # Create test envs
-    test_envs, device_list = load_homer_env(config, 'test')
+    test_envs, device_list = load_homer_env(config, 'validation')
     print("Loaded test environments")
     
     # Load test collector with new test envs. 

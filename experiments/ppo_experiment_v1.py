@@ -34,7 +34,7 @@ from tianshou.data import (
 from tianshou.env import SubprocVectorEnv
 from tianshou.policy import PPOPolicy
 from tianshou.trainer import onpolicy_trainer
-from tianshou.utils.net.common import ActorCritic, Net
+from tianshou.utils.net.common import ActorCritic, DataParallelNet, Net
 from tianshou.utils.net.discrete import Actor, Critic
 
 import warnings
@@ -157,8 +157,15 @@ def train_agent(config, logger, log_path):
     print(f"Environment Action shape: {action_shape}")
     print(f"Environment Observation shape: {env.observation_space.shape}")
     
-    actor = Actor(net, action_shape, device=device).to(device)
-    critic = Critic(net, device=device).to(device)
+    if torch.cuda.is_available():
+        actor = DataParallelNet(
+            Actor(net, args.action_shape, device=None).to(args.device)
+        )
+        critic = DataParallelNet(Critic(net, device=None).to(args.device))
+    else:
+        actor = Actor(net, action_shape, device=device).to(device)
+        critic = Critic(net, device=device).to(device)
+    
     actor_critic = ActorCritic(actor, critic)
     
     # optimizer of the actor and the critic
@@ -243,8 +250,15 @@ def train_agent(config, logger, log_path):
 
     def save_checkpoint_fn(epoch, env_step, gradient_step):
         ckpt_path = os.path.join(log_path, f"checkpoint_{epoch}.pth")
-        torch.save({"model": policy.state_dict()}, ckpt_path)
+        torch.save(
+            {
+                "model": policy.state_dict(), 
+                "optim": optim.state_dict()
+            }, ckpt_path
+        )
         print(f"Checkpoint saved to {ckpt_path}")
+        buffer_path = os.path.join(log_path, f"train_buffer_{epoch}.pkl")
+        pickle.dump(train_collector.buffer, open(buffer_path, "wb"))
         return ckpt_path
     
     print("Running training")
@@ -273,7 +287,7 @@ def train_agent(config, logger, log_path):
 def do_eval(config, policy, test_collector):
     
     # Create test envs
-    test_envs, device_list = load_homer_env(config, 'test')
+    test_envs, device_list = load_homer_env(config, 'validation')
     print("Loaded test environments")
     
     # Load test collector with new test envs. 
