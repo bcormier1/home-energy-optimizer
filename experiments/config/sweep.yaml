@@ -72,10 +72,6 @@ parameters:
     distribution: int_uniform
     max: 34560
     min: 8640
-  save_test_data:
-    distribution: categorical
-    values:
-      - "false"
   start_soc:
     distribution: categorical
     values:

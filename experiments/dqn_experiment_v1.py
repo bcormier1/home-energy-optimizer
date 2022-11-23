@@ -32,8 +32,8 @@ from tianshou.data import (
     AsyncCollector
 )
 from tianshou.env import SubprocVectorEnv
-from tianshou.policy import PPOPolicy
-from tianshou.trainer import onpolicy_trainer
+from tianshou.policy import DQNPolicy
+from tianshou.trainer import offpolicy_trainer
 from tianshou.utils.net.common import ActorCritic, Net
 from tianshou.utils.net.discrete import Actor, Critic
 
@@ -50,7 +50,6 @@ def main(args):
     
     # Set up logs
     now = datetime.datetime.now().strftime("%y%m%d-%H%M%S")
-    config.algo_name = "ppo"
     log_name = os.path.join(config.task, config.algo_name, now)
     log_path = os.path.join(config.log_path, log_name) 
     
@@ -157,13 +156,9 @@ def train_agent(config, logger, log_path):
     print(f"Environment Action shape: {action_shape}")
     print(f"Environment Observation shape: {env.observation_space.shape}")
     
-    actor = Actor(net, action_shape, device=device).to(device)
-    critic = Critic(net, device=device).to(device)
-    actor_critic = ActorCritic(actor, critic)
-    
     # optimizer of the actor and the critic
     lr_optimizer = config.lr_optimizer
-    optim = torch.optim.Adam(actor_critic.parameters(), lr=lr_optimizer)
+    optim = torch.optim.Adam(net.parameters(), lr=lr_optimizer)
     
     lr_scheduler = None
     if config.lr_decay:
@@ -174,31 +169,16 @@ def train_agent(config, logger, log_path):
         lr_scheduler = LambdaLR(
             optim, lr_lambda=lambda epoch: 1 - epoch / max_update_num
         )
-
-    # Since environment action space is discrete 
-    def dist(p):
-        return torch.distributions.Categorical(logits=p)
     
-    policy = PPOPolicy(
-        actor, 
-        critic, 
-        optim, 
-        dist,
+    policy = DQNPolicy(
+        net,
+        optim,
         discount_factor=config.gamma,
-        gae_lambda=config.gae_lambda,
-        max_grad_norm=config.max_grad_norm,
-        vf_coef=config.vf_coef,
-        ent_coef=config.ent_coef,
-        reward_normalization=config.rew_norm,
+        estimation_step=config.n_est_steps,
+        target_update_freq=config.target_update_freq,
         action_space=env.action_space,
         action_scaling=config.action_scaling,
-        lr_scheduler=lr_scheduler,  
-        deterministic_eval=True,
-        eps_clip=config.eps_clip,
-        value_clip=config.value_clip,
-        dual_clip=config.dual_clip,
-        advantage_normalization=config.norm_adv,
-        recompute_advantage=config.recompute_adv,
+        lr_scheduler=lr_scheduler
     ).to(device)
 
     if config.resume_path:
@@ -213,10 +193,7 @@ def train_agent(config, logger, log_path):
     # when you have enough RAM
     buffer = VectorReplayBuffer(
         config.replay_buffer_collector,
-        buffer_num=len(train_envs),
-        ignore_obs_next=True,
-    #    save_only_last_obs=True,
-    #    stack_num=config.frames_stack,
+        buffer_num=len(train_envs)
     )
     print('Buffer Loaded')    
     train_collector = Collector(
@@ -247,9 +224,27 @@ def train_agent(config, logger, log_path):
         print(f"Checkpoint saved to {ckpt_path}")
         return ckpt_path
     
+    # Demo functions from:
+    # https://github.com/thu-ml/tianshou/blob/b9a6d8b5f083663905e9ca9e6d6f88fc30511138/test/discrete/test_dqn.py#L118
+    # else useL 
+    def train_fn(epoch, env_step):
+        # eps annnealing, just a demo
+        if env_step <= 10000:
+            policy.set_eps(config.eps_train)
+        elif env_step <= 50000:
+            eps = config.eps_train - (env_step - 10000) / \
+                40000 * (0.9 * config.eps_train)
+            policy.set_eps(eps)
+        else:
+            policy.set_eps(0.1 * config.eps_train)
+
+    def test_fn(epoch, env_step):
+        policy.set_eps(config.eps_test)
+        
+    
     print("Running training")
     # see https://tianshou.readthedocs.io/en/master/api/tianshou.trainer.html
-    result = onpolicy_trainer(
+    result = offpolicy_trainer(
         policy,
         train_collector,
         test_collector,
@@ -259,6 +254,9 @@ def train_agent(config, logger, log_path):
         episode_per_test=config.test_num,
         batch_size=config.batch_size,
         step_per_collect= config.steps_per_collect,
+        update_per_step= 1 / config.steps_per_collect,
+        train_fn=train_fn,
+        test_fn=test_fn,
         stop_fn=lambda mean_reward: mean_reward >= config.reward_stop,
         logger=logger,
         verbose=True,
@@ -324,12 +322,8 @@ def load_homer_env(config, data_subset, example=False):
     file_loader = DataLoader(config, data_subset)
     
     # If test, we need to supply the save data
-    #if data_subset == 'test' and config.save_test_data:
     history = config.save_test_data
     result_path = config.result_path 
-    #else: #Don't save. 
-    #    history = False
-    #    result_path = ""
 
     if config.pricing_env == 'dummy':
         device_list = ['dummy' for _ in range(config.n_dummy_envs)]

@@ -170,7 +170,7 @@ class battery:
         # Calculate the actual amount delivered
         net_input = input_energy * self.charge_loss
         
-        # Update capacity and decrement capacity
+        # Update capacity
         self.avl_energy += net_input
         self.update_capacity_degredation(net_input)
         self.soc = self.avl_energy / self.capacity
