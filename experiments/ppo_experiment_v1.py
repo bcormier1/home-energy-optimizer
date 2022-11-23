@@ -243,8 +243,15 @@ def train_agent(config, logger, log_path):
 
     def save_checkpoint_fn(epoch, env_step, gradient_step):
         ckpt_path = os.path.join(log_path, f"checkpoint_{epoch}.pth")
-        torch.save({"model": policy.state_dict()}, ckpt_path)
+        torch.save(
+            {
+                "model": policy.state_dict(), 
+                "optim": optim.state_dict()
+            }, ckpt_path
+        )
         print(f"Checkpoint saved to {ckpt_path}")
+        buffer_path = os.path.join(log_path, f"train_buffer_{epoch}.pkl")
+        pickle.dump(train_collector.buffer, open(buffer_path, "wb"))
         return ckpt_path
     
     print("Running training")
@@ -273,7 +280,7 @@ def train_agent(config, logger, log_path):
 def do_eval(config, policy, test_collector):
     
     # Create test envs
-    test_envs, device_list = load_homer_env(config, 'test')
+    test_envs, device_list = load_homer_env(config, 'validation')
     print("Loaded test environments")
     
     # Load test collector with new test envs. 
