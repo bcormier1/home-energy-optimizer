@@ -159,9 +159,9 @@ def train_agent(config, logger, log_path):
     
     if torch.cuda.is_available():
         actor = DataParallelNet(
-            Actor(net, args.action_shape, device=None).to(args.device)
+            Actor(net, action_shape, device=None).to(device)
         )
-        critic = DataParallelNet(Critic(net, device=None).to(args.device))
+        critic = DataParallelNet(Critic(net, device=None).to(device))
     else:
         actor = Actor(net, action_shape, device=device).to(device)
         critic = Critic(net, device=device).to(device)
