@@ -34,7 +34,7 @@ from tianshou.data import (
 from tianshou.env import SubprocVectorEnv
 from tianshou.policy import PPOPolicy
 from tianshou.trainer import onpolicy_trainer
-from tianshou.utils.net.common import ActorCritic, Net
+from tianshou.utils.net.common import ActorCritic, DataParallelNet, Net
 from tianshou.utils.net.discrete import Actor, Critic
 
 import warnings
@@ -157,8 +157,15 @@ def train_agent(config, logger, log_path):
     print(f"Environment Action shape: {action_shape}")
     print(f"Environment Observation shape: {env.observation_space.shape}")
     
-    actor = Actor(net, action_shape, device=device).to(device)
-    critic = Critic(net, device=device).to(device)
+    if torch.cuda.is_available():
+        actor = DataParallelNet(
+            Actor(net, args.action_shape, device=None).to(args.device)
+        )
+        critic = DataParallelNet(Critic(net, device=None).to(args.device))
+    else:
+        actor = Actor(net, action_shape, device=device).to(device)
+        critic = Critic(net, device=device).to(device)
+    
     actor_critic = ActorCritic(actor, critic)
     
     # optimizer of the actor and the critic
