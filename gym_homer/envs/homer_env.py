@@ -95,7 +95,7 @@ class HomerEnv(gym.Env):
         #Reset reward and history
         self.cumulative_reward = 0
         self.history = None
-        self.updated_action=None
+        self.updated_action = None
 
         #Reset battery in line with initial operating conditions.
         self.battery = battery(capacity=self.start_capacity, 

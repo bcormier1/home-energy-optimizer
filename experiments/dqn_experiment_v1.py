@@ -27,10 +27,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
 
 from tianshou.utils import WandbLogger
-from tianshou.data import (
-    Collector, 
-    VectorReplayBuffer
-)
+from tianshou.data import Collector, VectorReplayBuffer
 from tianshou.env import SubprocVectorEnv
 from tianshou.policy import RainbowPolicy, DQNPolicy
 from tianshou.trainer import offpolicy_trainer
@@ -129,6 +126,11 @@ def train_agent(config, logger, log_path):
     test_envs, _ = load_homer_env(config, 'validation')
     print("Loaded validation environments")
 
+    # Seed
+    np.random.seed(config.seed)
+    torch.manual_seed(config.seed)
+    train_envs.seed(config.seed)
+    test_envs.seed(config.seed)
     
     # Define Network
     env, _ = load_homer_env(config, 'train', True) 
@@ -205,7 +207,7 @@ def train_agent(config, logger, log_path):
             estimation_step=config.n_est_steps,
             action_space=env.action_space,
             target_update_freq=config.target_update_freq,
-        ).to(args.device)
+        ).to(device)
     elif config.algo_name == "dqn":        
         policy = DQNPolicy(
             net,
