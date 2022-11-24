@@ -7,7 +7,6 @@ import argparse
 import torch
 import datetime
 import wandb
-import pickle
 
 #set working dir and path. 
 parent_dir = os.getcwd()
@@ -32,10 +31,10 @@ from tianshou.data import (
     VectorReplayBuffer
 )
 from tianshou.env import SubprocVectorEnv
-from tianshou.policy import RainbowPolicy, DQNPolicy
+from tianshou.policy import DiscreteSACPolicy
 from tianshou.trainer import offpolicy_trainer
 from tianshou.utils.net.common import Net
-from tianshou.utils.net.discrete import NoisyLinear
+from tianshou.utils.net.discrete import Actor, Critic
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -150,36 +149,42 @@ def train_agent(config, logger, log_path):
     obs_shape = env.observation_space.shape or env.observation_space.n
     action_shape = env.action_space.shape or env.action_space.n
     
+    net = Net(
+        obs_shape,
+        action_shape,
+        hidden_sizes=hidden_sizes, 
+        device=device
+    )
     
-    # Define NN parameters
-    def noisy_linear(x, y):
-        return NoisyLinear(x, y, config.noisy_std)
+    actor = Actor(
+        net, 
+        action_shape, 
+        softmax_output=False, 
+        device=device
+    ).to(device)
+    actor_optim = torch.optim.Adam(actor.parameters(), lr=config.actor_lr)
     
-    if config.algo_name == "rainbow":
-        # Rainbow DQN implementation
-        net = Net(
-            obs_shape,
-            action_shape,
-            hidden_sizes=hidden_sizes,
-            device=device,
-            softmax=True,
-            num_atoms=config.num_atoms,
-            dueling_param=({
-                "linear_layer": noisy_linear
-            }, {
-                "linear_layer": noisy_linear
-            }),
-        )
-    elif config.algo_name == "dqn": 
-        # Vanilla DQN implementation
-        net = Net(
-            obs_shape,
-            action_shape,
-            hidden_sizes=hidden_sizes, 
-            device=device
-        )
-    else:
-        raise Exception(f"Only 'dqn' and 'rainbow' algorithms supported, received {config.algo_name}")
+    net_c1 = Net(obs_shape, hidden_sizes=hidden_sizes, device=device)
+    critic1 = Critic(
+        net_c1, 
+        last_size=action_shape, 
+        device=device
+    ).to(device)
+    critic1_optim = torch.optim.Adam(critic1.parameters(), lr=config.critic_lr)
+    
+    net_c2 = Net(obs_shape, hidden_sizes=hidden_sizes, device=device)
+    critic2 = Critic(
+        net_c2, 
+        last_size=action_shape,
+        device=args.device
+    ).to(device)
+    critic2_optim = torch.optim.Adam(critic2.parameters(), lr=config.critic_lr)
+    
+    if config.auto_alpha:
+        target_entropy = 0.98 * np.log(np.prod(args.action_shape))
+        log_alpha = torch.zeros(1, requires_grad=True, device=device)
+        alpha_optim = torch.optim.Adam([log_alpha], lr=config.alpha_lr)
+        setattr(config, "alpha", (target_entropy, log_alpha, alpha_optim))
     
     print(f"Environment Action space: {env.action_space}")
     print(f"Environment Action shape: {action_shape}")
@@ -189,44 +194,24 @@ def train_agent(config, logger, log_path):
     lr_optimizer = config.lr_optimizer
     optim = torch.optim.Adam(net.parameters(), lr=lr_optimizer)
     
-    lr_scheduler = None
-    if config.lr_decay:
-        # decay learning rate to 0 linearly
-        max_update_num = np.ceil(
-            config.steps_per_epoch / config.steps_per_collect
-            ) * config.n_max_epochs
-        lr_scheduler = LambdaLR(
-            optim, lr_lambda=lambda epoch: 1 - epoch / max_update_num
-        )
-    
-    if config.algo_name == "rainbow":
-        policy = RainbowPolicy(
-            net,
-            optim,
-            config.gamma,
-            config.num_atoms,
-            config.v_min,
-            config.v_max,
-            estimation_step=config.n_est_steps,
-            action_space=env.action_space,
-            target_update_freq=config.target_update_freq,
-        ).to(config.device)
-    elif config.algo_name == "dqn":        
-        policy = DQNPolicy(
-            net,
-            optim,
-            discount_factor=config.gamma,
-            estimation_step=config.n_est_steps,
-            target_update_freq=config.target_update_freq,
-            action_space=env.action_space,
-            action_scaling=config.action_scaling,
-            lr_scheduler=lr_scheduler
-        ).to(device)
+    policy = DiscreteSACPolicy(
+        actor,
+        actor_optim,
+        critic1,
+        critic1_optim,
+        critic2,
+        critic2_optim,
+        config.tau,
+        config.gamma,
+        config.alpha,
+        estimation_step=config.n_est_steps,
+        reward_normalization=config.rew_norm
+    ).to(device)
 
     if config.resume_path:
         print(f"Resuming from path {config.resume_path}")
         policy.load_state_dict(
-            torch.load(config.resume_path, map_location=args.device))
+            torch.load(config.resume_path, map_location=device))
         print("Loaded agent from: ", config.resume_path)
     else:
         print("Commencing new run with untrained agent.")
@@ -235,7 +220,8 @@ def train_agent(config, logger, log_path):
     # when you have enough RAM
     buffer = VectorReplayBuffer(
         config.replay_buffer_collector,
-        buffer_num=len(train_envs)
+        buffer_num=len(train_envs),
+        ignore_obs_next=True
     )
     print('Buffer Loaded')    
     train_collector = Collector(
@@ -273,24 +259,6 @@ def train_agent(config, logger, log_path):
         pickle.dump(train_collector.buffer, open(buffer_path, "wb"))
         return ckpt_path
     
-    # Demo functions from:
-    # https://github.com/thu-ml/tianshou/blob/b9a6d8b5f083663905e9ca9e6d6f88fc30511138/test/discrete/test_dqn.py#L118
-    # else useL 
-    def train_fn(epoch, env_step):
-        # eps annnealing, just a demo
-        if env_step <= 10000:
-            policy.set_eps(config.eps_train)
-        elif env_step <= 50000:
-            eps = config.eps_train - (env_step - 10000) / \
-                40000 * (0.9 * config.eps_train)
-            policy.set_eps(eps)
-        else:
-            policy.set_eps(0.1 * config.eps_train)
-
-    def test_fn(epoch, env_step):
-        policy.set_eps(config.eps_test)
-        
-    
     print("Running training")
     # see https://tianshou.readthedocs.io/en/master/api/tianshou.trainer.html
     result = offpolicy_trainer(
@@ -302,14 +270,12 @@ def train_agent(config, logger, log_path):
         repeat_per_collect=config.repeat_per_collector,
         episode_per_test=config.test_num,
         batch_size=config.batch_size,
+        stop_fn=lambda mean_reward: mean_reward >= config.reward_stop,
+        save_best_fn=save_best_fn,
+        logger=logger,
         step_per_collect= config.steps_per_collect,
         update_per_step= 1 / config.steps_per_collect,
-        train_fn=train_fn,
-        test_fn=test_fn,
-        stop_fn=lambda mean_reward: mean_reward >= config.reward_stop,
-        logger=logger,
-        verbose=True,
-        save_best_fn=save_best_fn,
+        test_in_train=False,
         resume_from_log=config.resume_id is not None,
         save_checkpoint_fn=save_checkpoint_fn,
     )
