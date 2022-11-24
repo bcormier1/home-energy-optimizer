@@ -157,14 +157,14 @@ def train_agent(config, logger, log_path):
     print(f"Environment Action shape: {action_shape}")
     print(f"Environment Observation shape: {env.observation_space.shape}")
     
-    if torch.cuda.is_available():
-        actor = DataParallelNet(
-            Actor(net, action_shape, device=None).to(device)
-        )
-        critic = DataParallelNet(Critic(net, device=None).to(device))
-    else:
-        actor = Actor(net, action_shape, device=device).to(device)
-        critic = Critic(net, device=device).to(device)
+    #if torch.cuda.is_available():
+    #    actor = DataParallelNet(
+    #        Actor(net, action_shape, device=None).to(device)
+    #    )
+    #    critic = DataParallelNet(Critic(net, device=None).to(device))
+    #else:
+    actor = Actor(net, action_shape, device=device).to(device)
+    critic = Critic(net, device=device).to(device)
     
     actor_critic = ActorCritic(actor, critic)
     
