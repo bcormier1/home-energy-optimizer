@@ -22,6 +22,7 @@ from data.data_utils import (
 import gym
 from gym import spaces, wrappers
 from gym_homer.envs.homer_env import HomerEnv
+from models.network import DQN, Rainbow
 
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
@@ -210,7 +211,7 @@ def train_agent(config, logger, log_path):
             estimation_step=config.n_est_steps,
             action_space=env.action_space,
             target_update_freq=config.target_update_freq,
-        ).to(config.device)
+        ).to(device)
     elif config.algo_name == "dqn":        
         policy = DQNPolicy(
             net,
