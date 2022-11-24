@@ -7,6 +7,7 @@
     "do_train": true,
     "do_eval":true, 
     "discrete_env": true,
+    "icm": false,
     "n_dummy_envs": 150,
     "log_path":"logs",
     "hidden_sizes": [64, 64],
@@ -28,13 +29,10 @@
     "test_num": 10,
     "training_num":64,
     "n_est_steps": 120,
-    "target_update_freq": 320,
-    "eps_test":0.05,
-    "eps_train":0.1,
     "batch_size": 124,
     "reward_stop": 200,
     "action_scaling":false,
-    "steps_per_epoch": 20000,
+    "steps_per_epoch": 100000,
     "steps_per_collect": 288,
     "resume_path":null,
     "resume_id":null,
@@ -46,6 +44,9 @@
     "n_days":90,
     "val_offset":120,
     "eval_n_repeats":2,
-    "save_test_data":true
+    "save_test_data":true,
+    "icm_reward_scale":0.01,
+    "icm_fwd_loss":0.2,
+    "icm_lr_scale":0.1
 }
 

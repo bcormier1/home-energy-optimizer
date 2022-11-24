@@ -24,17 +24,15 @@ from gym_homer.envs.homer_env import HomerEnv
 
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
+from torch import nn
 
 from tianshou.utils import WandbLogger
-from tianshou.data import (
-    Collector, 
-    VectorReplayBuffer
-)
+from tianshou.data import Collector, VectorReplayBuffer
 from tianshou.env import SubprocVectorEnv
-from tianshou.policy import DiscreteSACPolicy
+from tianshou.policy import DiscreteSACPolicy, ICMPolicy
 from tianshou.trainer import offpolicy_trainer
 from tianshou.utils.net.common import Net
-from tianshou.utils.net.discrete import Actor, Critic
+from tianshou.utils.net.discrete import Actor, Critic, IntrinsicCuriosityModule
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -149,6 +147,7 @@ def train_agent(config, logger, log_path):
     obs_shape = env.observation_space.shape or env.observation_space.n
     action_shape = env.action_space.shape or env.action_space.n
     
+    # Network
     net = Net(
         obs_shape,
         action_shape,
@@ -156,6 +155,7 @@ def train_agent(config, logger, log_path):
         device=device
     )
     
+    # Actor
     actor = Actor(
         net, 
         action_shape, 
@@ -164,6 +164,7 @@ def train_agent(config, logger, log_path):
     ).to(device)
     actor_optim = torch.optim.Adam(actor.parameters(), lr=config.actor_lr)
     
+    # Critics
     net_c1 = Net(obs_shape, hidden_sizes=hidden_sizes, device=device)
     critic1 = Critic(
         net_c1, 
@@ -207,6 +208,38 @@ def train_agent(config, logger, log_path):
         estimation_step=config.n_est_steps,
         reward_normalization=config.rew_norm
     ).to(device)
+    
+    if config.icm: # Use the intrinsic Curiosity module 
+        feature_net = Net(
+            obs_shape,
+            action_shape,
+            hidden_sizes=hidden_sizes, 
+            device=device
+        )
+        output_dim = int(np.prod(action_shape)) * 1 
+        feature_net.net = nn.Sequential(
+                feature_net.model, 
+                nn.Linear(output_dim, output_dim),
+                nn.ReLU(inplace=True)
+            )
+        action_dim = np.prod(action_shape)
+        feature_dim = output_dim
+        icm_net = IntrinsicCuriosityModule(
+            feature_net.net,
+            feature_dim,
+            action_dim,
+            hidden_sizes=hidden_sizes,
+            device=device,
+        )
+        icm_optim = torch.optim.Adam(icm_net.parameters(), lr=config.actor_lr)
+        policy = ICMPolicy(
+            policy, 
+            icm_net, 
+            icm_optim,  
+            config.icm_lr_scale, 
+            config.icm_reward_scale,
+            config.icm_fwd_loss
+        ).to(device)
 
     if config.resume_path:
         print(f"Resuming from path {config.resume_path}")

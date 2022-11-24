@@ -22,16 +22,12 @@ from data.data_utils import (
 import gym
 from gym import spaces, wrappers
 from gym_homer.envs.homer_env import HomerEnv
-from models.network import DQN, Rainbow
 
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
 
 from tianshou.utils import WandbLogger
-from tianshou.data import (
-    Collector, 
-    VectorReplayBuffer
-)
+from tianshou.data import Collector, VectorReplayBuffer
 from tianshou.env import SubprocVectorEnv
 from tianshou.policy import RainbowPolicy, DQNPolicy
 from tianshou.trainer import offpolicy_trainer

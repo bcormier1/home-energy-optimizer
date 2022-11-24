@@ -3,9 +3,11 @@
     "start_soc": "full",
     "pricing_env": "simple",
     "task":"Homer_SimpleEnv",
+    "algo_name":"ppo",
     "do_train": true,
     "do_eval":true, 
     "discrete_env": true,
+    "icm": true,
     "n_dummy_envs":  150,
     "log_path":"logs",
     "hidden_sizes": [64, 64],
@@ -37,7 +39,6 @@
     "steps_per_collect": 288,
     "resume_path":null,
     "resume_id":null,
-    "algo_name":"ppo",
     "frames_stack":4,
     "max_devices":15,
     "charge_rate":5,
@@ -46,5 +47,8 @@
     "n_days":90,
     "val_offset":120,
     "eval_n_repeats":2,
-    "save_test_data":true
+    "save_test_data":true,
+    "icm_reward_scale":0.01,
+    "icm_fwd_loss":0.2,
+    "icm_lr_scale":0.1
 }

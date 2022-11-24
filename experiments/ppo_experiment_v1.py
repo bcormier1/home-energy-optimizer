@@ -24,18 +24,18 @@ from gym_homer.envs.homer_env import HomerEnv
 
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
+from torch import nn
 
 from tianshou.utils import WandbLogger
-from tianshou.data import (
-    Collector, 
-    VectorReplayBuffer, 
-    AsyncCollector
-)
+from tianshou.data import Collector, VectorReplayBuffer
 from tianshou.env import SubprocVectorEnv
-from tianshou.policy import PPOPolicy
+from tianshou.policy import PPOPolicy, ICMPolicy
 from tianshou.trainer import onpolicy_trainer
 from tianshou.utils.net.common import ActorCritic, DataParallelNet, Net
-from tianshou.utils.net.discrete import Actor, Critic
+from tianshou.utils.net.discrete import (
+    Actor, 
+    Critic, 
+    IntrinsicCuriosityModule)
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -218,6 +218,37 @@ def train_agent(config, logger, log_path):
         advantage_normalization=config.norm_adv,
         recompute_advantage=config.recompute_adv,
     ).to(device)
+    
+    if config.icm: # Use the intrinsic Curiosity module
+        print('Loading Intrinsic Curiousity Module"
+        feature_net = Net(obs_shape,
+                          action_shape,
+                          hidden_sizes=hidden_sizes, 
+                          device=device)
+        output_dim = int(np.prod(action_shape)) * 1 
+        feature_net.net = nn.Sequential(
+                feature_net.model, 
+                nn.Linear(output_dim, output_dim),
+                nn.ReLU(inplace=True)
+            )
+        action_dim = np.prod(action_shape)
+        feature_dim = output_dim
+        icm_net = IntrinsicCuriosityModule(
+            feature_net.net,
+            feature_dim,
+            action_dim,
+            hidden_sizes=hidden_sizes,
+            device=device,
+        )
+        icm_optim = torch.optim.Adam(icm_net.parameters(), lr=lr_optimizer)
+        policy = ICMPolicy(
+            policy, 
+            icm_net, 
+            icm_optim,  
+            config.icm_lr_scale, 
+            config.icm_reward_scale,
+            config.icm_fwd_loss
+        ).to(device)
 
     if config.resume_path:
         print(f"Resuming from path {config.resume_path}")
