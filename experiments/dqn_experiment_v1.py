@@ -129,6 +129,11 @@ def train_agent(config, logger, log_path):
     test_envs, _ = load_homer_env(config, 'validation')
     print("Loaded validation environments")
 
+    # Seed
+    np.random.seed(config.seed)
+    torch.manual_seed(config.seed)
+    train_envs.seed(config.seed)
+    test_envs.seed(config.seed)
     
     # Define Network
     env, _ = load_homer_env(config, 'train', True) 

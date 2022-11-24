@@ -1,4 +1,5 @@
 {
+    "seed": 1286,
     "start_soc": "full",
     "pricing_env": "simple",
     "task":"Homer_SimpleEnv",
