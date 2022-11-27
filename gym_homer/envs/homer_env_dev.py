@@ -140,8 +140,8 @@ class HomerEnv(gym.Env):
         self._do_first_step(first_obs)
 
         # Get observation and info
-        info = self._get_info()
-        self._log_step(info)
+        info, extra_info = self._get_info()
+        self._log_step(info, extra_info)
 
         if self.render_mode == "human":
             self._render_frame()
@@ -196,8 +196,8 @@ class HomerEnv(gym.Env):
         done = self._current_tick == self._end_tick
 
         # Get observation and info
-        info = self._get_info()
-        self._log_step(info)
+        info, extra_info = self._get_info()
+        self._log_step(info, extra_info)
 
         # Save output dataframe.
         if done and self.save_history:
@@ -205,15 +205,20 @@ class HomerEnv(gym.Env):
 
         if self.render_mode == "human":
             self._render_frame()
+        
+        r1 = self.reward
+        r2 = self.sq_reward
+        rew = - abs(r1 - r2) ** 4
 
-        return obs, self.reward, done, False, info
+        return obs, rew, done, False, info
 
     def _do_first_step(self, obs) -> None:
         """
         first observation is returned from get_obs.
         array slice of dimension
         """
-        self.action = 0  # First step 'was' always standby
+        self.action = self.action_intervals + 1 # First step 'was' always standby
+        self.updated_action = 0
         # Calculate net
         self.net, self.e_flux = self._apply_action(
             self.action,
@@ -259,17 +264,21 @@ class HomerEnv(gym.Env):
         # Need to flatten the array so that it matches observation dim.
         return self.data_arr[c:c + 1, :].squeeze(0)
 
-    def _get_info(self) -> Dict:
+    def _get_info(self) -> Tuple[Dict, Dict]:
         """
         translates the environments state into an observation
         """
+        # Info for the agent
         info_dict = {
+            "reward": self.reward, 
+            "net": self.net, 
+            "action":self.action,
+            "updated_action":self.updated_action,
+            "bat_output": self.e_flux, 
+        }
+        # Extra info for logging/debug
+        extra_info = {
             "tick": self._current_tick,
-            "reward": self.reward,
-            "net": self.net,
-            "action": self.action,
-            "updated_action": self.updated_action,
-            "bat_output": self.e_flux,
             "cumulative_reward": self.cumulative_reward,
             "no_solar_cumulative_reward": self.no_solar_cumulative_reward,
             "no_battery_cumulative_reward": self.no_battery_cumulative_reward,
@@ -279,16 +288,18 @@ class HomerEnv(gym.Env):
             "sq_updated_action": self.sq_updated_action,
             "sq_bat_output":self.sq_eflux
         }
-        return info_dict
+        return info_dict, extra_info
 
-    def _log_step(self, info) -> None:
+    def _log_step(self, info, extra_info) -> None:
         """
         logs all steps
         """
-        if not self.history:
-            self.history = {key: [] for key in info.keys()}
+        all_info = info | extra_info
 
-        for key, value in info.items():
+        if not self.history:
+            self.history = {key:[] for key in all_info.keys()}
+
+        for key, value in all_info.items():
             self.history[key].append(value)
 
     def _apply_action(self, action, home) -> Tuple[float, float]:

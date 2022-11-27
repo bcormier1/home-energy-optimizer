@@ -77,14 +77,14 @@ class DataLoader():
             steps = max_days * 24 * 12
             if was_valid == False:
                 if len(data) <= steps:
-                    print("Warning: not enough data! Defaulting to 30 days")
-                    steps = 24 * 12 * 30
+                    print("Warning: not enough data! Defaulting to 7 days")
+                    steps = 24 * 12 * 7
                 data = data.head(steps)
         
         # Offset the validation set. 
         if offset_validation is not None:
             # offset the first few values to step the dataset forward in time.
-            data = data.loc[offset_validation:offset_validation+2880,].copy()
+            data = data.loc[offset_validation:offset_validation+2016,].copy()
         
         print(f"loaded {len(data)} steps from {fname}")
         return data

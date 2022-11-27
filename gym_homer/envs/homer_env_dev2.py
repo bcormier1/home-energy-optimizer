@@ -1,10 +1,10 @@
 """
-Date: 17th November 2022
+Date: 23rd November 2022
 
 Gym Environment for Home Energy Management
 
 Authors: Alexander To and Brody Cormier
-Version: v1
+Version: v2
 """
 
 from datetime import datetime 
@@ -34,8 +34,7 @@ class HomerEnv(gym.Env):
 
         """
         Initialises a HOMER Env.
-        """
-        self.print_save = False # Whether to print and save unique data summary and actions.  
+        """     
         # Set data and devices
         self.discrete=discrete
         self.df=data   
@@ -61,6 +60,7 @@ class HomerEnv(gym.Env):
         self._current_tick = None
         self._end_tick = None
         self.reward=None
+        self.reward2=None
         self.cumulative_reward = None
         self.action = None
 
@@ -95,7 +95,7 @@ class HomerEnv(gym.Env):
         #Reset reward and history
         self.cumulative_reward = 0
         self.history = None
-        self.updated_action = None
+        self.updated_action=None
 
         #Reset battery in line with initial operating conditions.
         self.battery = battery(capacity=self.start_capacity, 
@@ -114,8 +114,8 @@ class HomerEnv(gym.Env):
         self._do_first_step(first_obs)
 
         # Get observation and info
-        info, extra_info = self._get_info()
-        self._log_step(info, extra_info)
+        info = self._get_info()
+        self._log_step(info)
 
         if self.render_mode == "human":
             self._render_frame()
@@ -143,7 +143,8 @@ class HomerEnv(gym.Env):
         else:# Continuous action space
             raise NotImplementedError
 
-        self.reward = self._calculate_reward(self.net,
+        self.reward, self.reward2 = self._calculate_reward(obs[self.idx['solar']],
+                                             obs[self.idx['loads']],
                                              obs[self.idx['export_tariff']],
                                              obs[self.idx['import_tariff']])
 
@@ -153,8 +154,8 @@ class HomerEnv(gym.Env):
         done = self._current_tick == self._end_tick
 
         # Get observation and info
-        info, extra_info = self._get_info()
-        self._log_step(info, extra_info)
+        info = self._get_info()
+        self._log_step(info)
 
         # Save output dataframe.
         if done and self.save_history:
@@ -163,15 +164,14 @@ class HomerEnv(gym.Env):
         if self.render_mode == "human":
             self._render_frame()
 
-        return obs, self.reward, done, False, info
+        return obs, self.reward2, done, False, info
     
     def _do_first_step(self, obs)-> None:
         """
         first obervation is returned from get_obs. 
         array slice of dimension
         """
-        # First step 'was' always standby
-        self.action = self.action_intervals + 1 
+        self.action = 0 # First step 'was' always standby
         self.updated_action = 0
         # Calculate net
         self.net, self.e_flux = self._apply_action(
@@ -179,7 +179,8 @@ class HomerEnv(gym.Env):
                 obs[self.idx['loads']] + obs[self.idx['solar']]
             )
         # Caclulate Reward        
-        self.reward = self._calculate_reward(self.net, 
+        self.reward, self.reward2 = self._calculate_reward(obs[self.idx['solar']],
+                                             obs[self.idx['loads']], 
                                              obs[self.idx['export_tariff']], 
                                              obs[self.idx['import_tariff']])
         self.cumulative_reward += self.reward 
@@ -206,35 +207,30 @@ class HomerEnv(gym.Env):
         # Need to flatten the array so that it matches observation dim. 
         return self.data_arr[c:c+1,:].squeeze(0)
 
-    def _get_info(self) -> Tuple[Dict,Dict]:
+    def _get_info(self) -> Dict:
         """ 
         translates the environments state into an observation
         """
-        # Info for the agent
         info_dict = {
+            "tick": self._current_tick,
+            "reward2":self.reward2,
             "reward": self.reward, 
             "net": self.net, 
             "action":self.action,
             "updated_action":self.updated_action,
             "bat_output": self.e_flux, 
-        }
-        # Extra info for logging/debug
-        extra_info = {
-            "tick": self._current_tick,
             "cumulative_reward":self.cumulative_reward
         }
-        return info_dict , extra_info
+        return info_dict
     
-    def _log_step(self, info, extra_info) -> None:
+    def _log_step(self, info) -> None:
         """
         logs all steps
         """
-        all_info = info | extra_info
-
         if not self.history:
-            self.history = {key:[] for key in all_info.keys()}
+            self.history = {key:[] for key in info.keys()}
 
-        for key, value in all_info.items():
+        for key, value in info.items():
             self.history[key].append(value)
 
     def _apply_action(self,action, home) -> Tuple[float, float]:
@@ -248,18 +244,51 @@ class HomerEnv(gym.Env):
         net = home + e_flux
         return net, e_flux
 
-    def _calculate_reward(self, net, export_tariff, import_tariff) -> float:
+    def _calculate_reward(self, solar, load, export_tariff, import_tariff
+    ) -> Tuple[float, float]:
         # Calculate reward
-        if net < 0:
+        
+        if self.net < 0:
             tariff = export_tariff if export_tariff < 0 else export_tariff * -1 
-            reward = net * tariff
-        elif net > 0:
+            reward = self.net * tariff
+        elif self.net > 0:
             tariff = import_tariff if import_tariff < 0 else import_tariff * -1
-            reward = net * tariff
+            reward = self.net * tariff
         else:
             reward = 0
-            
-        return float(reward)
+        
+        reward2 = None
+        if self.updated_action == 0:
+            reward2 = -1
+        else:
+            if abs(solar) > 0 and load > 0: # Opportunity to use solar
+                if load + solar > 0: # Excess solar
+                    if self.updated_action > 0: # Reward for charging
+                        reward2 =  abs(import_tariff)#abs(import_tariff) * 10
+                    else: # Reward for discharging/standing by
+                        reward2 = abs(export_tariff)#abs(export_tariff) * 10
+                else: # Solar deficit
+                    if self.updated_action > 0: # Reward for charging
+                        reward2 = abs(export_tariff)#1 / (1 - abs(export_tariff))
+                    else: # Reward for discharging
+                        reward2 = abs(import_tariff)#1 / (1 - abs(import_tariff))
+            elif load == 0 and abs(solar) == 0:
+                if self.updated_action > 0: # Reward for charging
+                    reward2 = 1*abs(import_tariff)#1 / (10 * abs(import_tariff)) / 3
+                else: # Reward for discharging
+                    reward2 = -abs(export_tariff)# 1 / (10 * abs(export_tariff)) / 3
+            elif load == 0 and abs(solar) > 0:
+                if self.updated_action > 0: # Reward for charging
+                    reward2 = abs(export_tariff) 
+                else: # Reward for discharging
+                    reward2 = -1*abs(import_tariff) 
+            elif load > 0 and abs(solar) == 0:
+                if self.updated_action > 0: # Reward for charging
+                    reward2 = -abs(export_tariff) #10 / abs(import_tariff) 
+                else: # Reward for discharging
+                    reward2 = -abs(export_tariff)*10  #(10 / abs(export_tariff)
+
+        return float(reward), float(reward2)
 
     def render(self, mode='human') -> None:
         if mode == 'human':
@@ -328,17 +357,10 @@ class HomerEnv(gym.Env):
         results = pd.merge(obs, info, left_index=True, right_index=True)
         # Note for repetitions > 1 this will overwrite previous repetitions.
         device = self.device_id if self.device_id != None else "dummy"
-        # Add Device Column
-        results.loc[:,'device_id'] = device
-        if self.print_save:
-            print(results['updated_action'].value_counts())
-            results.to_csv(
-                self.save_path+f"/{device}_results_array_{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}.csv",
-                index=False
-            )
-        else:
-            results.to_csv(self.save_path+f"/{device}_results_array.csv", index=False)
-            
+        #print(results['updated_action'].value_counts())
+        results.to_csv(self.save_path+f"/{device}_results_array_{str(datetime.now().strftime('%Y_%m_%d_%H_%M_%S'))}.csv", 
+                       index=False)
+    
     def _process_data(self) -> None:
         """
         Import data from the passed dataframe into a numpy array. 

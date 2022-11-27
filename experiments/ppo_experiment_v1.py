@@ -162,14 +162,14 @@ def train_agent(config, logger, log_path):
     print(f"Environment Action shape: {action_shape}")
     print(f"Environment Observation shape: {env.observation_space.shape}")
     
-    #if torch.cuda.is_available():
-    #    actor = DataParallelNet(
-    #        Actor(net, action_shape, device=None).to(device)
-    #    )
-    #    critic = DataParallelNet(Critic(net, device=None).to(device))
-    #else:
-    actor = Actor(net, action_shape, device=device).to(device)
-    critic = Critic(net, device=device).to(device)
+    if torch.cuda.is_available() and config.data_parallel:
+        actor = DataParallelNet(
+            Actor(net, action_shape, device=None).to(device)
+        )
+        critic = DataParallelNet(Critic(net, device=None).to(device))
+    else:
+        actor = Actor(net, action_shape, device=device).to(device)
+        critic = Critic(net, device=device).to(device)
     
     actor_critic = ActorCritic(actor, critic)
     
@@ -203,20 +203,22 @@ def train_agent(config, logger, log_path):
         optim, 
         dist,
         discount_factor=config.gamma,
-        gae_lambda=config.gae_lambda,
-        max_grad_norm=config.max_grad_norm,
-        vf_coef=config.vf_coef,
-        ent_coef=config.ent_coef,
-        reward_normalization=config.rew_norm,
-        action_space=env.action_space,
-        action_scaling=config.action_scaling,
-        lr_scheduler=lr_scheduler,  
-        deterministic_eval=True,
         eps_clip=config.eps_clip,
-        value_clip=config.value_clip,
         dual_clip=config.dual_clip,
+        value_clip=config.value_clip,
         advantage_normalization=config.norm_adv,
         recompute_advantage=config.recompute_adv,
+        vf_coef=config.vf_coef,
+        ent_coef=config.ent_coef,
+        max_grad_norm=config.max_grad_norm,
+        gae_lambda=config.gae_lambda,
+        reward_normalization=config.rew_norm,
+        max_batchsize = config.max_batchsize_policy,
+        action_scaling=config.action_scaling,
+        action_bound_method='clip',
+        action_space=env.action_space,
+        lr_scheduler=lr_scheduler,  
+        deterministic_eval=False
     ).to(device)
     
     if config.icm: # Use the intrinsic Curiosity module
@@ -261,30 +263,37 @@ def train_agent(config, logger, log_path):
     # replay buffer: `save_last_obs` and `stack_num` can be removed together
     # when you have enough RAM
     buffer = VectorReplayBuffer(
-        config.replay_buffer_collector,
-        buffer_num=len(train_envs),
-        ignore_obs_next=True,
-    #    save_only_last_obs=True,
-    #    stack_num=config.frames_stack,
+        total_size=config.replay_buffer_collector,
+        buffer_num=len(train_envs)
     )
-    print('Buffer Loaded')    
+    print(f'Buffer Loaded with length {len(buffer)}')    
     train_collector = Collector(
         policy, 
         train_envs, 
-        buffer, 
-        exploration_noise=True
+        buffer
     )
     test_collector = Collector(
         policy, 
-        test_envs,
-        exploration_noise=True
+        test_envs
     )
     
-    print(f"Testing train_collector, filling replay buffer")
-    train_collector.collect(
+    print(f"Running train_collector, filling replay buffer")
+    collector_output = train_collector.collect(
         n_step=config.batch_size * config.training_num
     )
-    print("Done")
+    print(f'{len(train_envs)} vectorised buffers loaded, each '
+          f'with {len(buffer)} steps\nSampled action summary:\n')    
+
+    unique, counts = np.unique(buffer.act, return_counts=True)
+    for i in range(len(unique)):
+        print(f"Action: {unique[i]:.4f}, Counts: {counts[i]}")
+    
+    c_keys=['n/ep', 'n/st', 'rews', 'lens', 'rew', 'len', 'rew_std', 'len_std']
+    print('Collector Stats')
+    for key in c_keys:
+        print(f'Stat: {collector_output[key]}')
+
+    print("\nDone")
     def save_best_fn(policy):
         best_pth = os.path.join(log_path, "best_policy.pth")
         torch.save(policy.state_dict(), best_pth)

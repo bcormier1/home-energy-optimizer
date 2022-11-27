@@ -13,7 +13,7 @@ metric:
 parameters:
   action_intervals:
     distribution: int_uniform
-    max: 1000
+    max: 10
     min: 1
   batch_size:
     distribution: int_uniform
@@ -73,8 +73,8 @@ parameters:
       - random
   steps_per_collect:
     distribution: int_uniform
-    max: 12960
-    min: 144
+    max: 288
+    min: 6
   steps_per_epoch:
     distribution: int_uniform
     max: 200000
