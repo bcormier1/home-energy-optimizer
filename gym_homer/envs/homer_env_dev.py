@@ -458,7 +458,7 @@ class HomerEnv(gym.Env):
         # Enumerate column indx - useful for indexing later
         self.idx = {k: v for v, k in enumerate(self.df.columns)}
         # Full data array
-        self.data_arr = self.df.to_numpy(copy=True, dtype=np.float32)
+        self.data_arr = self.df.to_numpy(dtype=np.float32)
 
     def seed(self, seed) -> None:
         np.random.seed(seed)

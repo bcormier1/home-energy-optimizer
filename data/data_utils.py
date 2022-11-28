@@ -97,8 +97,8 @@ class DataLoader():
         return data
     
     def _load_device(self, device, truncate=False, max_days=None, 
-                    val_offset=10, n_days_train=None, n_days_val=None,
-                    n_days_test=None):
+                    val_offset=10, n_days_train=-1, n_days_val=-1,
+                    n_days_test=-1):
         """
         Loads the data for a particular device assuming that device has it's own
         file according to format:
@@ -119,17 +119,13 @@ class DataLoader():
             n = n_days_val
         elif self.subset == 'test':
             n = n_days_test
-        # Truncate the dataset 
-        
-        if len(data) < 0 or len(data) > n:
+        # Truncate the dataset
+        if len(data) >= n:
+            print(f"loaded truncated {n * 24 * 12} steps from {fname}")
+            return data.head(n * 24 * 12)
+        else:
             print(f"loaded {len(data)} steps from {fname}")
             return data
-        else:
-            print(f"loaded {n * 24 * 12} steps from {fname}")
-            return data.head(n * 24 * 12)
-        
-        print(f"loaded {len(data)} steps from {fname}")
-        return data
 
     def load_dummy_data(self):
         

@@ -50,7 +50,7 @@ def main(args):
     log_name = os.path.join(config.task, config.algo_name, now)
     log_path = os.path.join(config.log_path, log_name) 
     
-    # Set up directoriesfor logging
+    # Set up directories for logging
     exists = os.path.exists(log_path)
     if not exists:
         os.makedirs(log_path)
@@ -61,10 +61,10 @@ def main(args):
     # Initialise the wandb logger
     logger = WandbLogger(
         save_interval=1000,
-        #run_id=settings.get('run_id',None),
-        #name=settings.get('run_name',None),
         project="RL_project", 
         entity="w266_wra",
+        train_interval=1,
+        update_interval=10,
         config=settings
         )
     writer = SummaryWriter(config.log_path)
@@ -83,6 +83,9 @@ def main(args):
             else:
                 settings.update({wandb_key: wandb_val})
             print(f"Sweep Argument Check: {wandb_key}: {settings[wandb_key]}")
+        # Update onfig. 
+        for k,v in settings.items():
+            setattr(config, k, v)
     
     policy = None
     test_collector = None
@@ -367,13 +370,8 @@ def load_homer_env(config, data_subset, example=False):
 
     file_loader = DataLoader(config, data_subset)
     
-    # If test, we need to supply the save data
-    #if data_subset == 'test' and config.save_test_data:
     history = config.save_test_data
     result_path = config.result_path 
-    #else: #Don't save. 
-    #    history = False
-    #    result_path = ""
 
     if config.pricing_env == 'dummy':
         device_list = ['dummy' for _ in range(config.n_dummy_envs)]
@@ -438,7 +436,7 @@ def load_homer_env(config, data_subset, example=False):
         if example:
             # Load a single example to get env dimensions.
             envs =  HomerEnv(
-                data=file_loader.load_device(device_list[0]), 
+                data=file_loader._load_device(device_list[0]), 
                 start_soc=config.start_soc, 
                 discrete=config.discrete_env,
                 charge_rate=config.charge_rate,
@@ -477,7 +475,6 @@ def load_homer_env(config, data_subset, example=False):
         raise Exception
 
     return envs, device_list
-
 
 if __name__ == "__main__":
     

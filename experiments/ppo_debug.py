@@ -362,9 +362,8 @@ def do_eval(config, policy, test_collector):
         print(
             f"Repeat: {repeat} "
             f"Final reward: {result['rews'].mean():.4f},"
-            f" length: {result['lens'].mean():.4f}\n"
-            f"{result}"
-        )
+            f" length: {result['lens'].mean():.4f}\n")
+        #    f"{result}")
         
         # Build dict:
         if config.save_test_data:
