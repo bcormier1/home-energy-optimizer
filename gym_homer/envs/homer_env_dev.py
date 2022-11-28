@@ -206,10 +206,6 @@ class HomerEnv(gym.Env):
 
         if self.render_mode == "human":
             self._render_frame()
-        
-        #r1 = self.reward ** 2 if self.reward > 0 else -1.0 * (self.reward ** 2)
-        #r2 = self.sq_reward
-        #rew = - abs(r1 - r2) ** 4
 
         return obs, self.reward, done, False, info
 
@@ -319,19 +315,19 @@ class HomerEnv(gym.Env):
         which does not push the home energy system into export/import. 
         """
         # requires battery._get_limits() having been called in .step().
-        max_d, max_c = self.battery.battery_limits
+        max_d_, max_c_ = self.battery.battery_limits
 
         if action > 0: # Charge
             if self.importable:
                 charge_request = action * self.battery.max_input
             else:
-                charge_request = action * float(max_c) 
+                charge_request = action * float(max_c_) 
             _, e_flux, _ = self.battery.charge(charge_request)
         else: # Discharge 
             if self.exportable:
                 discharge_request = action * self.battery.max_output
             else:
-                discharge_request = action * float(max_d) * -1
+                discharge_request = action * float(max_d_) * -1
             _, e_flux, _ = self.battery.discharge(discharge_request)
             
         net = home + e_flux

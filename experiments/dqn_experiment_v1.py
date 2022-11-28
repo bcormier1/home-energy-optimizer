@@ -317,7 +317,7 @@ def train_agent(config, logger, log_path):
 def do_eval(config, policy, test_collector):
     
     # Create test envs
-    test_envs, device_list = load_homer_env(config, 'validation')
+    test_envs, device_list = load_homer_env(config, 'test')
     print("Loaded test environments")
     
     # Load test collector with new test envs. 
@@ -448,10 +448,13 @@ def load_homer_env(config, data_subset, example=False):
             n_devices = file_loader.n_devices
             env_list = [
                 lambda i=i: HomerEnv(
-                    data=file_loader.load_device(device_list[i], 
+                    data=file_loader._load_device(device_list[i], 
                                                  truncate=config.truncate, 
                                                  max_days=config.n_days,
-                                                 val_offset=config.val_offset), 
+                                                 val_offset=config.val_offset,
+                                                 n_days_train=config.n_days_train,
+                                                 n_days_val=config.n_days_val,
+                                                 n_days_test=config.n_days_val), 
                     start_soc=config.start_soc, 
                     discrete=config.discrete_env,
                     charge_rate=config.charge_rate,

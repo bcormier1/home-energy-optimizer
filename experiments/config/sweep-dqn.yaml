@@ -1,0 +1,79 @@
+program: dqn_experiment_v1.py
+command:
+  - ${env}
+  - python
+  - ${program}
+  - "--file"
+  - "config/settings_dqn.json"
+  - "--sweep"
+method: bayes
+metric:
+  goal: maximize
+  name: train/reward
+parameters:
+  action_intervals:
+    distribution: int_uniform
+    max: 5
+    min: 1
+  batch_size:
+    distribution: int_uniform
+    max: 256
+    min: 64
+  hidden_layer_dims:
+    distribution: int_uniform
+    max: 128
+    min: 32
+  lr_decay:
+    distribution: categorical
+    values:
+      - "true"
+      - "false"
+  lr_optimizer:
+    distribution: uniform
+    max: 0.001
+    min: 5e-05
+  max_grad_norm:
+    distribution: uniform
+    max: 1
+    min: 0.25
+  n_hidden_layers:
+    distribution: int_uniform
+    max: 6
+    min: 2
+  n_max_epochs:
+    distribution: int_uniform
+    max: 100
+    min: 1
+  parameterised_mlp:
+    distribution: categorical
+    values:
+      - "true"
+  repeat_per_collector:
+    distribution: int_uniform
+    max: 5
+    min: 1
+  replay_buffer_collector:
+    distribution: int_uniform
+    max: 1000000
+    min: 10000
+  start_soc:
+    distribution: categorical
+    values:
+      - full
+      - random
+  steps_per_collect:
+    distribution: int_uniform
+    max: 288
+    min: 60
+  steps_per_epoch:
+    distribution: int_uniform
+    max: 100000
+    min: 10000
+  eps_test:
+    distribution: int_uniform
+    max: 0.1
+    min: 0.02
+  eps_train:
+    distribution: int_uniform
+    max: 0.3
+    min: 0.1

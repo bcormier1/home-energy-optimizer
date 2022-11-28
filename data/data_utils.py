@@ -91,7 +91,42 @@ class DataLoader():
         # Offset the validation set. 
         if offset_validation is not None:
             # offset the first few values to step the dataset forward in time.
-            data = data.loc[offset_validation:,].copy()
+            data = data.loc[offset_validation:offset_validation*2,].copy()
+        
+        print(f"loaded {len(data)} steps from {fname}")
+        return data
+    
+    def _load_device(self, device, truncate=False, max_days=None, 
+                    val_offset=10, n_days_train=None, n_days_val=None,
+                    n_days_test=None):
+        """
+        Loads the data for a particular device assuming that device has it's own
+        file according to format:
+        <device_name>_simple_<subset>.parquet
+        returns a data frame 
+        """
+        # Load file
+        if self.debug:
+            data_dir = self.path+f"/data/{self.dataset_type}/"+self.subset+"/"
+        else:
+            data_dir = self.path+f"/data/{self.dataset_type}_pricing/"+self.subset+"/"
+        fname = f"{device}_{self.dataset_type}_{self.subset}.parquet"
+        data = pd.read_parquet(data_dir+fname).fillna(0)
+                
+        if self.subset == 'train':
+            n = n_days_train
+        elif self.subset == 'validation':
+            n = n_days_val
+        elif self.subset == 'test':
+            n = n_days_test
+        # Truncate the dataset 
+        
+        if len(data) < 0 or len(data) > n:
+            print(f"loaded {len(data)} steps from {fname}")
+            return data
+        else:
+            print(f"loaded {n * 24 * 12} steps from {fname}")
+            return data.head(n * 24 * 12)
         
         print(f"loaded {len(data)} steps from {fname}")
         return data
