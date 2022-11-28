@@ -27,7 +27,11 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
 
 from tianshou.utils import WandbLogger
-from tianshou.data import Collector, VectorReplayBuffer
+from tianshou.data import (
+    Collector, 
+    VectorReplayBuffer, 
+    PrioritizedVectorReplayBuffer
+)
 from tianshou.env import SubprocVectorEnv
 from tianshou.policy import RainbowPolicy, DQNPolicy
 from tianshou.trainer import offpolicy_trainer
@@ -63,7 +67,7 @@ def main(args):
         save_interval=1000,
         project="RL_project", 
         entity="w266_wra",
-        train_interval=1,
+        train_interval=10,
         update_interval=10,
         config=settings
         )
@@ -233,10 +237,18 @@ def train_agent(config, logger, log_path):
     
     # replay buffer: `save_last_obs` and `stack_num` can be removed together
     # when you have enough RAM
-    buffer = VectorReplayBuffer(
-        config.replay_buffer_collector,
-        buffer_num=len(train_envs)
-    )
+    if config.prioritized_replay_buffer:
+        buffer = PrioritizedVectorReplayBuffer(
+            config.replay_buffer_collector,
+            buffer_num=len(train_envs),
+            alpha=config.alpha,
+            beta=config.beta,
+        )
+    else:
+        buffer = VectorReplayBuffer(
+            config.replay_buffer_collector,
+            buffer_num=len(train_envs)
+        )
     print('Buffer Loaded')    
     train_collector = Collector(
         policy, 
@@ -278,7 +290,7 @@ def train_agent(config, logger, log_path):
     # else useL 
     def train_fn(epoch, env_step):
         # eps annnealing, just a demo
-        if env_step <= 10000:
+        if env_step <= 20000:
             policy.set_eps(config.eps_train)
         elif env_step <= 50000:
             eps = config.eps_train - (env_step - 10000) / \
@@ -303,7 +315,7 @@ def train_agent(config, logger, log_path):
         episode_per_test=config.test_num,
         batch_size=config.batch_size,
         step_per_collect= config.steps_per_collect,
-        update_per_step= 1 / config.steps_per_collect,
+        update_per_step= 1 / config.steps_per_collect,        
         train_fn=train_fn,
         test_fn=test_fn,
         stop_fn=lambda mean_reward: mean_reward >= config.reward_stop,
