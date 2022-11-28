@@ -70,10 +70,10 @@ parameters:
     max: 100000
     min: 10000
   eps_test:
-    distribution: int_uniform
+    distribution: uniform
     max: 0.1
     min: 0.02
   eps_train:
-    distribution: int_uniform
+    distribution: uniform
     max: 0.3
     min: 0.1
