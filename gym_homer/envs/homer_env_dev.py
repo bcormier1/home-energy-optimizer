@@ -33,7 +33,7 @@ class HomerEnv(gym.Env):
     def __init__(self, capacity=14, start_soc='full', render_mode=None,
                  discrete=True, data=None, charge_rate=5, action_intervals=1,
                  save_history=False, save_path="", device_id=None, 
-                 benchmarks=True) -> None:
+                 benchmarks=True, exportable=True, importable=True) -> None:
 
         """
         Initialises a HOMER Env.
@@ -53,8 +53,8 @@ class HomerEnv(gym.Env):
         # Battery Things
         self.start_capacity = capacity
         self.start_soc = start_soc
-        self.exportable = True
-        self.importable = True
+        self.exportable = exportable
+        self.importable = importable
         self.e_flux = None
         self.net = None
         self.charge_rate = charge_rate
@@ -81,13 +81,14 @@ class HomerEnv(gym.Env):
 
         ## Define action spaces
         if self.discrete:
-            self.action_space = spaces.Discrete((2 * self.action_intervals) + 1,
+            self.action_space = spaces.Discrete((2*self.action_intervals)+1,
                                                 start=0)
         else:
             raise NotImplementedError
 
         ## Observation Spaces
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf,
+        self.observation_space = spaces.Box(low=-np.inf, 
+                                            high=np.inf,
                                             shape=(self.data_arr.shape[1],),
                                             dtype=np.float32)
 
@@ -116,7 +117,7 @@ class HomerEnv(gym.Env):
                                exportable=self.exportable,
                                charge_rate=self.charge_rate,
                                discharge_rate=self.discharge_rate)
-        
+        sq_start_soc = self.battery.soc
         # Instantiate benchmark things
         if self.benchmarks:
             self.no_solar_cumulative_reward = 0
@@ -125,7 +126,7 @@ class HomerEnv(gym.Env):
             self.sq_updated_action = None
             # Reset battery in line with initial operating conditions.
             self.sq_battery = battery(capacity=self.start_capacity,
-                                      start_soc=self.start_soc,
+                                      start_soc=sq_start_soc,
                                       importable=False,
                                       exportable=False,
                                       charge_rate=self.charge_rate,
@@ -206,18 +207,18 @@ class HomerEnv(gym.Env):
         if self.render_mode == "human":
             self._render_frame()
         
-        r1 = self.reward
-        r2 = self.sq_reward
-        rew = - abs(r1 - r2) ** 4
+        #r1 = self.reward ** 2 if self.reward > 0 else -1.0 * (self.reward ** 2)
+        #r2 = self.sq_reward
+        #rew = - abs(r1 - r2) ** 4
 
-        return obs, rew, done, False, info
+        return obs, self.reward, done, False, info
 
     def _do_first_step(self, obs) -> None:
         """
         first observation is returned from get_obs.
         array slice of dimension
         """
-        self.action = self.action_intervals + 1 # First step 'was' always standby
+        self.action = self.action_intervals # First step 'was' always standby
         self.updated_action = 0
         # Calculate net
         self.net, self.e_flux = self._apply_action(
@@ -280,14 +281,20 @@ class HomerEnv(gym.Env):
         extra_info = {
             "tick": self._current_tick,
             "cumulative_reward": self.cumulative_reward,
-            "no_solar_cumulative_reward": self.no_solar_cumulative_reward,
-            "no_battery_cumulative_reward": self.no_battery_cumulative_reward,
-            "sq_cumulative_reward": self.sq_cumulative_reward,
-            "sq_soc": self.sq_battery.soc,
-            "sq_net": self.sq_net,
-            "sq_updated_action": self.sq_updated_action,
-            "sq_bat_output":self.sq_eflux
         }
+        if self.benchmarks:
+            benchmark_info = {
+                "no_solar_cumulative_reward": self.no_solar_cumulative_reward,
+                "no_battery_cumulative_reward": self.no_battery_cumulative_reward,
+                "sq_cumulative_reward": self.sq_cumulative_reward,
+                "sq_soc": self.sq_battery.soc,
+                "sq_net": self.sq_net,
+                "sq_updated_action": self.sq_updated_action,
+                "sq_bat_output":self.sq_eflux
+            }
+            # Add in the extra info.
+            extra_info = extra_info | benchmark_info
+
         return info_dict, extra_info
 
     def _log_step(self, info, extra_info) -> None:
@@ -303,13 +310,30 @@ class HomerEnv(gym.Env):
             self.history[key].append(value)
 
     def _apply_action(self, action, home) -> Tuple[float, float]:
-        if action > 0:
-            charge_request = action * self.battery.max_input
-            _, e_flux, _ = self.battery.charge(charge_request)
-        else:
-            discharge_request = action * self.battery.max_output
-            _, e_flux, _ = self.battery.discharge(discharge_request)
+        """
+        Applies action to battery taking into account the system configuration
+        regarding export/import. 
+        if importable/exportable, then the the action translates to the 
+        fraction of the max output/input of the battery. Else, the action 
+        translates to the fraction of the max output/input of the battery
+        which does not push the home energy system into export/import. 
+        """
+        # requires battery._get_limits() having been called in .step().
+        max_d, max_c = self.battery.battery_limits
 
+        if action > 0: # Charge
+            if self.importable:
+                charge_request = action * self.battery.max_input
+            else:
+                charge_request = action * float(max_c) 
+            _, e_flux, _ = self.battery.charge(charge_request)
+        else: # Discharge 
+            if self.exportable:
+                discharge_request = action * self.battery.max_output
+            else:
+                discharge_request = action * float(max_d) * -1
+            _, e_flux, _ = self.battery.discharge(discharge_request)
+            
         net = home + e_flux
         return net, e_flux
 
@@ -335,6 +359,14 @@ class HomerEnv(gym.Env):
             reward = net * tariff
         else:
             reward = 0
+        
+        
+        #if net < 0 and self.updated_action > 0:
+        #    reward = 1
+        #elif net > 0 and self.updated_action < 0:
+        #    reward = 1
+        #else:
+        #    reward = 0
 
         return float(reward)
 

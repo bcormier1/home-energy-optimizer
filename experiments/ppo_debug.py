@@ -7,7 +7,6 @@ import argparse
 import torch
 import datetime
 import wandb
-import pickle
 
 #set working dir and path. 
 parent_dir = os.getcwd()
@@ -25,14 +24,18 @@ from gym_homer.envs.homer_env_dev import HomerEnv
 
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
+from torch import nn
 
 from tianshou.utils import WandbLogger
 from tianshou.data import Collector, VectorReplayBuffer
 from tianshou.env import SubprocVectorEnv
-from tianshou.policy import RainbowPolicy, DQNPolicy
-from tianshou.trainer import offpolicy_trainer
-from tianshou.utils.net.common import Net
-from tianshou.utils.net.discrete import NoisyLinear
+from tianshou.policy import PPOPolicy, ICMPolicy
+from tianshou.trainer import onpolicy_trainer
+from tianshou.utils.net.common import ActorCritic, DataParallelNet, Net
+from tianshou.utils.net.discrete import (
+    Actor, 
+    Critic, 
+    IntrinsicCuriosityModule)
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -47,6 +50,7 @@ def main(args):
     
     # Set up logs
     now = datetime.datetime.now().strftime("%y%m%d-%H%M%S")
+    config.algo_name = "ppo"
     log_name = os.path.join(config.task, config.algo_name, now)
     log_path = os.path.join(config.log_path, log_name) 
     
@@ -61,8 +65,6 @@ def main(args):
     # Initialise the wandb logger
     logger = WandbLogger(
         save_interval=1000,
-        #run_id=settings.get('run_id',None),
-        #name=settings.get('run_name',None),
         project="RL_project", 
         entity="w266_wra",
         config=settings
@@ -125,7 +127,7 @@ def train_agent(config, logger, log_path):
     print("Loaded train Enironments")
     test_envs, _ = load_homer_env(config, 'validation')
     print("Loaded validation environments")
-
+    
     # Seed
     np.random.seed(config.seed)
     torch.manual_seed(config.seed)
@@ -147,44 +149,37 @@ def train_agent(config, logger, log_path):
     obs_shape = env.observation_space.shape or env.observation_space.n
     action_shape = env.action_space.shape or env.action_space.n
     
-    
-    # Define NN parameters
-    def noisy_linear(x, y):
-        return NoisyLinear(x, y, config.noisy_std)
-    
-    if config.algo_name == "rainbow":
-        # Rainbow DQN implementation
-        net = Net(
-            obs_shape,
-            action_shape,
-            hidden_sizes=hidden_sizes,
-            device=device,
-            softmax=True,
-            num_atoms=config.num_atoms,
-            dueling_param=({
-                "linear_layer": noisy_linear
-            }, {
-                "linear_layer": noisy_linear
-            }),
-        )
-    elif config.algo_name == "dqn": 
-        # Vanilla DQN implementation
-        net = Net(
-            obs_shape,
-            action_shape,
-            hidden_sizes=hidden_sizes, 
-            device=device
-        )
-    else:
-        raise Exception(f"Only 'dqn' and 'rainbow' algorithms supported, received {config.algo_name}")
+    net = Net(
+        obs_shape,
+        action_shape,
+        hidden_sizes=hidden_sizes, 
+        device=device
+    )
     
     print(f"Environment Action space: {env.action_space}")
     print(f"Environment Action shape: {action_shape}")
     print(f"Environment Observation shape: {env.observation_space.shape}")
     
+    if torch.cuda.is_available() and config.data_parallel:
+        actor = DataParallelNet(
+            Actor(net, action_shape, device=None).to(device)
+        )
+        critic = DataParallelNet(Critic(net, device=None).to(device))
+    else:
+        actor = Actor(net, action_shape, device=device).to(device)
+        critic = Critic(net, device=device).to(device)
+    
+    actor_critic = ActorCritic(actor, critic)
+    
+    # orthogonal initialization required for PPO 
+    for m in actor_critic.modules():
+        if isinstance(m, torch.nn.Linear):
+            torch.nn.init.orthogonal_(m.weight)
+            torch.nn.init.zeros_(m.bias)
+    
     # optimizer of the actor and the critic
     lr_optimizer = config.lr_optimizer
-    optim = torch.optim.Adam(net.parameters(), lr=lr_optimizer)
+    optim = torch.optim.Adam(actor_critic.parameters(), lr=lr_optimizer)
     
     lr_scheduler = None
     if config.lr_decay:
@@ -195,29 +190,64 @@ def train_agent(config, logger, log_path):
         lr_scheduler = LambdaLR(
             optim, lr_lambda=lambda epoch: 1 - epoch / max_update_num
         )
+
+    # Since environment action space is discrete 
+    def dist(p):
+        return torch.distributions.Categorical(logits=p)
     
-    if config.algo_name == "rainbow":
-        policy = RainbowPolicy(
-            net,
-            optim,
-            config.gamma,
-            config.num_atoms,
-            config.v_min,
-            config.v_max,
-            estimation_step=config.n_est_steps,
-            action_space=env.action_space,
-            target_update_freq=config.target_update_freq,
-        ).to(device)
-    elif config.algo_name == "dqn":        
-        policy = DQNPolicy(
-            net,
-            optim,
-            discount_factor=config.gamma,
-            estimation_step=config.n_est_steps,
-            target_update_freq=config.target_update_freq,
-            action_space=env.action_space,
-            action_scaling=config.action_scaling,
-            lr_scheduler=lr_scheduler
+    policy = PPOPolicy(
+        actor, 
+        critic, 
+        optim, 
+        dist,
+        discount_factor=config.gamma,
+        eps_clip=config.eps_clip,
+        dual_clip=config.dual_clip,
+        value_clip=config.value_clip,
+        advantage_normalization=config.norm_adv,
+        recompute_advantage=config.recompute_adv,
+        vf_coef=config.vf_coef,
+        ent_coef=config.ent_coef,
+        max_grad_norm=config.max_grad_norm,
+        gae_lambda=config.gae_lambda,
+        reward_normalization=config.rew_norm,
+        max_batchsize = config.max_batchsize_policy,
+        action_scaling=config.action_scaling,
+        action_bound_method='clip',
+        action_space=env.action_space,
+        lr_scheduler=lr_scheduler,  
+        deterministic_eval=config.deterministic_eval
+    ).to(device)
+    
+    if config.icm: # Use the intrinsic Curiosity module
+        print("Loading Intrinsic Curiousity Module")
+        feature_net = Net(obs_shape,
+                          action_shape,
+                          hidden_sizes=hidden_sizes, 
+                          device=device)
+        output_dim = int(np.prod(action_shape)) * 1 
+        feature_net.net = nn.Sequential(
+                feature_net.model, 
+                nn.Linear(output_dim, output_dim),
+                nn.ReLU(inplace=True)
+            )
+        action_dim = np.prod(action_shape)
+        feature_dim = output_dim
+        icm_net = IntrinsicCuriosityModule(
+            feature_net.net,
+            feature_dim,
+            action_dim,
+            hidden_sizes=hidden_sizes,
+            device=device,
+        )
+        icm_optim = torch.optim.Adam(icm_net.parameters(), lr=lr_optimizer)
+        policy = ICMPolicy(
+            policy, 
+            icm_net, 
+            icm_optim,  
+            config.icm_lr_scale, 
+            config.icm_reward_scale,
+            config.icm_fwd_loss
         ).to(device)
 
     if config.resume_path:
@@ -231,27 +261,37 @@ def train_agent(config, logger, log_path):
     # replay buffer: `save_last_obs` and `stack_num` can be removed together
     # when you have enough RAM
     buffer = VectorReplayBuffer(
-        config.replay_buffer_collector,
+        total_size=config.replay_buffer_collector,
         buffer_num=len(train_envs)
     )
-    print('Buffer Loaded')    
+    print(f'Buffer Loaded with length {len(buffer)}')    
     train_collector = Collector(
         policy, 
         train_envs, 
-        buffer, 
-        exploration_noise=True
+        buffer
     )
     test_collector = Collector(
         policy, 
-        test_envs,
-        exploration_noise=True
+        test_envs
     )
     
-    print(f"Testing train_collector, filling replay buffer")
-    train_collector.collect(
+    print(f"Running train_collector, filling replay buffer")
+    collector_output = train_collector.collect(
         n_step=config.batch_size * config.training_num
     )
-    print("Done")
+    print(f'{len(train_envs)} vectorised buffers loaded, each '
+          f'with {len(buffer)} steps\nSampled action summary:\n')    
+
+    unique, counts = np.unique(buffer.act, return_counts=True)
+    for i in range(len(unique)):
+        print(f"Action: {unique[i]:.4f}, Counts: {counts[i]}")
+    
+    c_keys=['n/ep', 'n/st', 'rews', 'lens', 'rew', 'len', 'rew_std', 'len_std']
+    print('Collector Stats')
+    for key in c_keys:
+        print(f'{key}: {collector_output[key]}')
+
+    print("\nDone")
     def save_best_fn(policy):
         best_pth = os.path.join(log_path, "best_policy.pth")
         torch.save(policy.state_dict(), best_pth)
@@ -270,27 +310,9 @@ def train_agent(config, logger, log_path):
         pickle.dump(train_collector.buffer, open(buffer_path, "wb"))
         return ckpt_path
     
-    # Demo functions from:
-    # https://github.com/thu-ml/tianshou/blob/b9a6d8b5f083663905e9ca9e6d6f88fc30511138/test/discrete/test_dqn.py#L118
-    # else useL 
-    def train_fn(epoch, env_step):
-        # eps annnealing, just a demo
-        if env_step <= 10000:
-            policy.set_eps(config.eps_train)
-        elif env_step <= 50000:
-            eps = config.eps_train - (env_step - 10000) / \
-                40000 * (0.9 * config.eps_train)
-            policy.set_eps(eps)
-        else:
-            policy.set_eps(0.1 * config.eps_train)
-
-    def test_fn(epoch, env_step):
-        policy.set_eps(config.eps_test)
-        
-    
     print("Running training")
     # see https://tianshou.readthedocs.io/en/master/api/tianshou.trainer.html
-    result = offpolicy_trainer(
+    result = onpolicy_trainer(
         policy,
         train_collector,
         test_collector,
@@ -300,9 +322,6 @@ def train_agent(config, logger, log_path):
         episode_per_test=config.test_num,
         batch_size=config.batch_size,
         step_per_collect= config.steps_per_collect,
-        update_per_step= 1 / config.steps_per_collect,
-        train_fn=train_fn,
-        test_fn=test_fn,
         stop_fn=lambda mean_reward: mean_reward >= config.reward_stop,
         logger=logger,
         verbose=True,
@@ -317,7 +336,7 @@ def train_agent(config, logger, log_path):
 def do_eval(config, policy, test_collector):
     
     # Create test envs
-    test_envs, device_list = load_homer_env(config, 'validation')
+    test_envs, device_list = load_homer_env(config, 'test')
     print("Loaded test environments")
     
     # Load test collector with new test envs. 
@@ -474,7 +493,6 @@ def load_homer_env(config, data_subset, example=False):
         raise Exception
 
     return envs, device_list
-
 
 if __name__ == "__main__":
     

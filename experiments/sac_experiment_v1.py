@@ -20,7 +20,7 @@ from data.data_utils import (
 
 import gym
 from gym import spaces, wrappers
-from gym_homer.envs.homer_env import HomerEnv
+from gym_homer.envs.homer_env_dev import HomerEnv
 
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
@@ -319,7 +319,7 @@ def train_agent(config, logger, log_path):
 def do_eval(config, policy, test_collector):
     
     # Create test envs
-    test_envs, device_list = load_homer_env(config, 'validation')
+    test_envs, device_list = load_homer_env(config, 'test')
     print("Loaded test environments")
     
     # Load test collector with new test envs. 
@@ -370,8 +370,12 @@ def load_homer_env(config, data_subset, example=False):
     file_loader = DataLoader(config, data_subset)
     
     # If test, we need to supply the save data
+    #if data_subset == 'test' and config.save_test_data:
     history = config.save_test_data
     result_path = config.result_path 
+    #else: #Don't save. 
+    #    history = False
+    #    result_path = ""
 
     if config.pricing_env == 'dummy':
         device_list = ['dummy' for _ in range(config.n_dummy_envs)]
@@ -420,6 +424,43 @@ def load_homer_env(config, data_subset, example=False):
                     discrete=config.discrete_env,
                     charge_rate=config.charge_rate,
                     action_intervals=config.action_intervals,
+                    exportable=config.exportable,
+                    importable=config.importable,
+                    benchmarks=config.benchmarks,
+                    save_history=history,
+                    save_path=result_path,
+                    device_id=device_list[i]
+                ) for i in range(n_devices)
+            ]            
+            envs = SubprocVectorEnv(env_list)
+            print(f"Sucessfully loaded {n_devices} environments")
+    
+    elif config.pricing_env == 'debug':
+        device_list = file_loader.device_list
+        if example:
+            # Load a single example to get env dimensions.
+            envs =  HomerEnv(
+                data=file_loader.load_device(device_list[0]), 
+                start_soc=config.start_soc, 
+                discrete=config.discrete_env,
+                charge_rate=config.charge_rate,
+                action_intervals=config.action_intervals
+            ) 
+        else:
+            n_devices = file_loader.n_devices
+            env_list = [
+                lambda i=i: HomerEnv(
+                    data=file_loader.load_device(device_list[i], 
+                                                 truncate=config.truncate, 
+                                                 max_days=config.n_days,
+                                                 val_offset=config.val_offset), 
+                    start_soc=config.start_soc, 
+                    discrete=config.discrete_env,
+                    charge_rate=config.charge_rate,
+                    action_intervals=config.action_intervals,
+                    exportable=config.exportable,
+                    importable=config.importable,
+                    benchmarks=config.benchmarks,
                     save_history=history,
                     save_path=result_path,
                     device_id=device_list[i]
@@ -435,6 +476,7 @@ def load_homer_env(config, data_subset, example=False):
         raise Exception
 
     return envs, device_list
+
 
 if __name__ == "__main__":
     

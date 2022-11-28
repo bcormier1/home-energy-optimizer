@@ -7,7 +7,6 @@ import argparse
 import torch
 import datetime
 import wandb
-import pickle
 
 #set working dir and path. 
 parent_dir = os.getcwd()
@@ -21,18 +20,22 @@ from data.data_utils import (
 
 import gym
 from gym import spaces, wrappers
-from gym_homer.envs.homer_env_dev import HomerEnv
+from gym_homer.envs.homer_env import HomerEnv
 
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
 
 from tianshou.utils import WandbLogger
-from tianshou.data import Collector, VectorReplayBuffer
+from tianshou.data import (
+    Collector, 
+    VectorReplayBuffer, 
+    AsyncCollector
+)
 from tianshou.env import SubprocVectorEnv
-from tianshou.policy import RainbowPolicy, DQNPolicy
-from tianshou.trainer import offpolicy_trainer
-from tianshou.utils.net.common import Net
-from tianshou.utils.net.discrete import NoisyLinear
+from tianshou.policy import PPOPolicy
+from tianshou.trainer import onpolicy_trainer
+from tianshou.utils.net.common import ActorCritic, Net
+from tianshou.utils.net.discrete import Actor, Critic
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -47,6 +50,7 @@ def main(args):
     
     # Set up logs
     now = datetime.datetime.now().strftime("%y%m%d-%H%M%S")
+    config.algo_name = "ppo"
     log_name = os.path.join(config.task, config.algo_name, now)
     log_path = os.path.join(config.log_path, log_name) 
     
@@ -126,11 +130,6 @@ def train_agent(config, logger, log_path):
     test_envs, _ = load_homer_env(config, 'validation')
     print("Loaded validation environments")
 
-    # Seed
-    np.random.seed(config.seed)
-    torch.manual_seed(config.seed)
-    train_envs.seed(config.seed)
-    test_envs.seed(config.seed)
     
     # Define Network
     env, _ = load_homer_env(config, 'train', True) 
@@ -147,44 +146,23 @@ def train_agent(config, logger, log_path):
     obs_shape = env.observation_space.shape or env.observation_space.n
     action_shape = env.action_space.shape or env.action_space.n
     
-    
-    # Define NN parameters
-    def noisy_linear(x, y):
-        return NoisyLinear(x, y, config.noisy_std)
-    
-    if config.algo_name == "rainbow":
-        # Rainbow DQN implementation
-        net = Net(
-            obs_shape,
-            action_shape,
-            hidden_sizes=hidden_sizes,
-            device=device,
-            softmax=True,
-            num_atoms=config.num_atoms,
-            dueling_param=({
-                "linear_layer": noisy_linear
-            }, {
-                "linear_layer": noisy_linear
-            }),
-        )
-    elif config.algo_name == "dqn": 
-        # Vanilla DQN implementation
-        net = Net(
-            obs_shape,
-            action_shape,
-            hidden_sizes=hidden_sizes, 
-            device=device
-        )
-    else:
-        raise Exception(f"Only 'dqn' and 'rainbow' algorithms supported, received {config.algo_name}")
+    net = Net(
+        obs_shape, 
+        hidden_sizes=hidden_sizes, 
+        device=device
+    )
     
     print(f"Environment Action space: {env.action_space}")
     print(f"Environment Action shape: {action_shape}")
     print(f"Environment Observation shape: {env.observation_space.shape}")
     
+    actor = Actor(net, action_shape, device=device).to(device)
+    critic = Critic(net, device=device).to(device)
+    actor_critic = ActorCritic(actor, critic)
+    
     # optimizer of the actor and the critic
     lr_optimizer = config.lr_optimizer
-    optim = torch.optim.Adam(net.parameters(), lr=lr_optimizer)
+    optim = torch.optim.Adam(actor_critic.parameters(), lr=lr_optimizer)
     
     lr_scheduler = None
     if config.lr_decay:
@@ -195,30 +173,32 @@ def train_agent(config, logger, log_path):
         lr_scheduler = LambdaLR(
             optim, lr_lambda=lambda epoch: 1 - epoch / max_update_num
         )
+
+    # Since environment action space is discrete 
+    def dist(p):
+        return torch.distributions.Categorical(logits=p)
     
-    if config.algo_name == "rainbow":
-        policy = RainbowPolicy(
-            net,
-            optim,
-            config.gamma,
-            config.num_atoms,
-            config.v_min,
-            config.v_max,
-            estimation_step=config.n_est_steps,
-            action_space=env.action_space,
-            target_update_freq=config.target_update_freq,
-        ).to(device)
-    elif config.algo_name == "dqn":        
-        policy = DQNPolicy(
-            net,
-            optim,
-            discount_factor=config.gamma,
-            estimation_step=config.n_est_steps,
-            target_update_freq=config.target_update_freq,
-            action_space=env.action_space,
-            action_scaling=config.action_scaling,
-            lr_scheduler=lr_scheduler
-        ).to(device)
+    policy = PPOPolicy(
+        actor, 
+        critic, 
+        optim, 
+        dist,
+        discount_factor=config.gamma,
+        gae_lambda=config.gae_lambda,
+        max_grad_norm=config.max_grad_norm,
+        vf_coef=config.vf_coef,
+        ent_coef=config.ent_coef,
+        reward_normalization=config.rew_norm,
+        action_scaling=config.action_scaling,
+        lr_scheduler=lr_scheduler, 
+        action_space=env.action_space, 
+        deterministic_eval=True,
+        eps_clip=config.eps_clip,
+        value_clip=config.value_clip,
+        dual_clip=config.dual_clip,
+        advantage_normalization=config.norm_adv,
+        recompute_advantage=config.recompute_adv,
+    ).to(device)
 
     if config.resume_path:
         print(f"Resuming from path {config.resume_path}")
@@ -232,7 +212,10 @@ def train_agent(config, logger, log_path):
     # when you have enough RAM
     buffer = VectorReplayBuffer(
         config.replay_buffer_collector,
-        buffer_num=len(train_envs)
+        buffer_num=len(train_envs),
+        ignore_obs_next=True,
+    #    save_only_last_obs=True,
+    #    stack_num=config.frames_stack,
     )
     print('Buffer Loaded')    
     train_collector = Collector(
@@ -259,38 +242,13 @@ def train_agent(config, logger, log_path):
 
     def save_checkpoint_fn(epoch, env_step, gradient_step):
         ckpt_path = os.path.join(log_path, f"checkpoint_{epoch}.pth")
-        torch.save(
-            {
-                "model": policy.state_dict(), 
-                "optim": optim.state_dict()
-            }, ckpt_path
-        )
+        torch.save({"model": policy.state_dict()}, ckpt_path)
         print(f"Checkpoint saved to {ckpt_path}")
-        buffer_path = os.path.join(log_path, f"train_buffer_{epoch}.pkl")
-        pickle.dump(train_collector.buffer, open(buffer_path, "wb"))
         return ckpt_path
-    
-    # Demo functions from:
-    # https://github.com/thu-ml/tianshou/blob/b9a6d8b5f083663905e9ca9e6d6f88fc30511138/test/discrete/test_dqn.py#L118
-    # else useL 
-    def train_fn(epoch, env_step):
-        # eps annnealing, just a demo
-        if env_step <= 10000:
-            policy.set_eps(config.eps_train)
-        elif env_step <= 50000:
-            eps = config.eps_train - (env_step - 10000) / \
-                40000 * (0.9 * config.eps_train)
-            policy.set_eps(eps)
-        else:
-            policy.set_eps(0.1 * config.eps_train)
-
-    def test_fn(epoch, env_step):
-        policy.set_eps(config.eps_test)
-        
     
     print("Running training")
     # see https://tianshou.readthedocs.io/en/master/api/tianshou.trainer.html
-    result = offpolicy_trainer(
+    result = onpolicy_trainer(
         policy,
         train_collector,
         test_collector,
@@ -300,9 +258,6 @@ def train_agent(config, logger, log_path):
         episode_per_test=config.test_num,
         batch_size=config.batch_size,
         step_per_collect= config.steps_per_collect,
-        update_per_step= 1 / config.steps_per_collect,
-        train_fn=train_fn,
-        test_fn=test_fn,
         stop_fn=lambda mean_reward: mean_reward >= config.reward_stop,
         logger=logger,
         verbose=True,
@@ -317,7 +272,7 @@ def train_agent(config, logger, log_path):
 def do_eval(config, policy, test_collector):
     
     # Create test envs
-    test_envs, device_list = load_homer_env(config, 'validation')
+    test_envs, device_list = load_homer_env(config, 'test')
     print("Loaded test environments")
     
     # Load test collector with new test envs. 
@@ -368,12 +323,12 @@ def load_homer_env(config, data_subset, example=False):
     file_loader = DataLoader(config, data_subset)
     
     # If test, we need to supply the save data
-    #if data_subset == 'test' and config.save_test_data:
-    history = config.save_test_data
-    result_path = config.result_path 
-    #else: #Don't save. 
-    #    history = False
-    #    result_path = ""
+    if data_subset == 'test' and config.save_test_data:
+        history = config.save_test_data
+        result_path = config.result_path 
+    else: #Don't save. 
+        history = False
+        result_path = ""
 
     if config.pricing_env == 'dummy':
         device_list = ['dummy' for _ in range(config.n_dummy_envs)]
@@ -422,43 +377,6 @@ def load_homer_env(config, data_subset, example=False):
                     discrete=config.discrete_env,
                     charge_rate=config.charge_rate,
                     action_intervals=config.action_intervals,
-                    exportable=config.exportable,
-                    importable=config.importable,
-                    benchmarks=config.benchmarks,
-                    save_history=history,
-                    save_path=result_path,
-                    device_id=device_list[i]
-                ) for i in range(n_devices)
-            ]            
-            envs = SubprocVectorEnv(env_list)
-            print(f"Sucessfully loaded {n_devices} environments")
-    
-    elif config.pricing_env == 'debug':
-        device_list = file_loader.device_list
-        if example:
-            # Load a single example to get env dimensions.
-            envs =  HomerEnv(
-                data=file_loader.load_device(device_list[0]), 
-                start_soc=config.start_soc, 
-                discrete=config.discrete_env,
-                charge_rate=config.charge_rate,
-                action_intervals=config.action_intervals
-            ) 
-        else:
-            n_devices = file_loader.n_devices
-            env_list = [
-                lambda i=i: HomerEnv(
-                    data=file_loader.load_device(device_list[i], 
-                                                 truncate=config.truncate, 
-                                                 max_days=config.n_days,
-                                                 val_offset=config.val_offset), 
-                    start_soc=config.start_soc, 
-                    discrete=config.discrete_env,
-                    charge_rate=config.charge_rate,
-                    action_intervals=config.action_intervals,
-                    exportable=config.exportable,
-                    importable=config.importable,
-                    benchmarks=config.benchmarks,
                     save_history=history,
                     save_path=result_path,
                     device_id=device_list[i]
@@ -474,7 +392,6 @@ def load_homer_env(config, data_subset, example=False):
         raise Exception
 
     return envs, device_list
-
 
 if __name__ == "__main__":
     

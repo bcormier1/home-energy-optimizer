@@ -19,13 +19,14 @@ class DataLoader():
         self.dataset_type = config.pricing_env
         self.path = os.path.dirname(os.getcwd())
         self.load_data(config)
+        self.debug = True if self.dataset_type == 'debug' else False
 
     def load_data(self, config):
 
         if config.pricing_env == 'dummy':
             return self.load_dummy_data()
             
-        elif config.pricing_env == 'simple':   
+        elif config.pricing_env == 'simple' or config.pricing_env == 'debug':   
             self.device_list = self.load_device_list(self)
             if (config.max_devices <= len(self.device_list) and 
                 config.max_devices > 0):
@@ -40,7 +41,10 @@ class DataLoader():
             raise NotImplementedError
 
     def load_device_list(self, config):
-        device_dir = self.path+f"/data/{self.dataset_type}_pricing/device_list.csv"
+        if self.dataset_type == 'debug':
+            device_dir = self.path+f"/data/debug/device_list.csv"
+        else:
+            device_dir = self.path+f"/data/{self.dataset_type}_pricing/device_list.csv"
         try:
             device_list = pd.read_csv(device_dir)['device_id'].tolist()
         except:
@@ -62,14 +66,17 @@ class DataLoader():
         # Data directory as the train set. 
         was_valid = False
         offset_validation = None
-        if self.subset == "validation":
+        if self.subset == "validation" and not self.debug:
             was_valid = True
             offset_validation = val_offset * 12 * 24
             self.subset = "train"
 
         # Load file
-        data_dir = self.path+f"/data/{self.dataset_type}_pricing/"+self.subset+"/"
-        fname = f"{device}_simple_{self.subset}.parquet"
+        if self.debug:
+            data_dir = self.path+f"/data/{self.dataset_type}/"+self.subset+"/"
+        else:
+            data_dir = self.path+f"/data/{self.dataset_type}_pricing/"+self.subset+"/"
+        fname = f"{device}_{self.dataset_type}_{self.subset}.parquet"
         data = pd.read_parquet(data_dir+fname).fillna(0)
         
         # Truncate the dataset 
@@ -84,7 +91,7 @@ class DataLoader():
         # Offset the validation set. 
         if offset_validation is not None:
             # offset the first few values to step the dataset forward in time.
-            data = data.loc[offset_validation:offset_validation+2016,].copy()
+            data = data.loc[offset_validation:,].copy()
         
         print(f"loaded {len(data)} steps from {fname}")
         return data

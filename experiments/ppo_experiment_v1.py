@@ -291,7 +291,7 @@ def train_agent(config, logger, log_path):
     c_keys=['n/ep', 'n/st', 'rews', 'lens', 'rew', 'len', 'rew_std', 'len_std']
     print('Collector Stats')
     for key in c_keys:
-        print(f'Stat: {collector_output[key]}')
+        print(f'{key}: {collector_output[key]}')
 
     print("\nDone")
     def save_best_fn(policy):
