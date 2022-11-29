@@ -47,8 +47,7 @@ class HomerEnv(gym.Env):
         self.save_history = save_history
         self.save_path = save_path
         self.device_id = device_id
-
-        self.action_intervals = action_intervals
+        self.env_best = -np.inf
 
         # Battery Things
         self.start_capacity = capacity
@@ -80,6 +79,7 @@ class HomerEnv(gym.Env):
         self._first_rendering = None
 
         ## Define action spaces
+        self.action_intervals = action_intervals
         if self.discrete:
             self.action_space = spaces.Discrete((2*self.action_intervals)+1,
                                                 start=0)
@@ -201,8 +201,9 @@ class HomerEnv(gym.Env):
         self._log_step(info, extra_info)
 
         # Save output dataframe.
-        if done and self.save_history:
+        if done and self.save_history and self.env_best < self.cumulative_reward:
             self.save_results()
+            self.env_best = self.cumulative_reward
 
         if self.render_mode == "human":
             self._render_frame()
@@ -255,11 +256,11 @@ class HomerEnv(gym.Env):
         loads = self.data_arr[c:c + 1, l:l + 1]
         max_d, max_c = self.battery.get_limits(solar, loads)
         # Update observations
-        self.data_arr[c:c + 1, md:md + 1] = max_d
-        self.data_arr[c:c + 1, mc:mc + 1] = max_c
-        self.data_arr[c:c + 1, sc:sc + 1] = self.battery.soc
+        self.data_arr[c:c+1, md:md+1] = max_d
+        self.data_arr[c:c+1, mc:mc+1] = max_c
+        self.data_arr[c:c+1, sc:sc+1] = self.battery.soc
         # Need to flatten the array so that it matches observation dim.
-        return self.data_arr[c:c + 1, :].squeeze(0)
+        return self.data_arr[c:c+1,:].squeeze(0)
 
     def _get_info(self) -> Tuple[Dict, Dict]:
         """
@@ -355,14 +356,6 @@ class HomerEnv(gym.Env):
             reward = net * tariff
         else:
             reward = 0
-        
-        
-        #if net < 0 and self.updated_action > 0:
-        #    reward = 1
-        #elif net > 0 and self.updated_action < 0:
-        #    reward = 1
-        #else:
-        #    reward = 0
 
         return float(reward)
 
@@ -436,15 +429,19 @@ class HomerEnv(gym.Env):
         # Save
         obs = pd.DataFrame(data=self.data_arr, columns=self.df.columns)
         info = pd.DataFrame(self.history)
-        results = pd.merge(obs, info, left_index=True, right_index=True)
-        # Note for repetitions > 1 this will overwrite previous repetitions.
+        # Add back in time data. 
+        if self.df_index is not None:
+            df2 = pd.merge(self.df_index, obs, left_index=True, right_index=True)
+            results = pd.merge(df2, info, left_index=True, right_index=True)
+        else:
+            results = pd.merge(obs, info, left_index=True, right_index=True)
         device = self.device_id if self.device_id != None else "dummy"
         # Add Device Column
         results.loc[:, 'device_id'] = device
         if self.print_save:
             print(results['updated_action'].value_counts())
             results.to_csv(
-                self.save_path + f"/{device}_results_array_{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}.csv",
+                self.save_path+f"/{device}_results_array_{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}.csv",
                 index=False
             )
         else:
@@ -455,10 +452,19 @@ class HomerEnv(gym.Env):
         Import data from the passed dataframe into a numpy array.
         all operations performed inplace for speed.
         """
+        self.df_index = None
+        
         # Enumerate column indx - useful for indexing later
+        remove_list = [
+            'Datetime', 'Timestamp', 'weekday','month_x','month_y','region_1','region_2','region_3',]
+        c_list = self.df.columns.tolist()
+        self.obs_shape = len(c_list)
+        if 'Datetime' in c_list and 'Timestamp' in c_list:
+            _ = [c_list.remove(x) for x in remove_list]
+            self.df_index = self.df[remove_list].reset_index()
+            self.df = self.df[c_list]
         self.idx = {k: v for v, k in enumerate(self.df.columns)}
-        # Full data array
-        self.data_arr = self.df.to_numpy(dtype=np.float32)
+        self.data_arr = self.df[c_list].to_numpy(dtype=np.float32)
 
     def seed(self, seed) -> None:
         np.random.seed(seed)

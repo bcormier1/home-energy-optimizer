@@ -294,8 +294,8 @@ def train_agent(config, logger, log_path):
             }, ckpt_path
         )
         print(f"Checkpoint saved to {ckpt_path}")
-        buffer_path = os.path.join(log_path, f"train_buffer_{epoch}.pkl")
-        pickle.dump(train_collector.buffer, open(buffer_path, "wb"))
+        #buffer_path = os.path.join(log_path, f"train_buffer_{epoch}.pkl")
+        #pickle.dump(train_collector.buffer, open(buffer_path, "wb"))
         return ckpt_path
     
     print("Running training")
@@ -343,6 +343,7 @@ def do_eval(config, policy, test_collector):
             test_envs,
             exploration_noise=True
         )
+        policy.load_state_dict(torch.load(f'{config.result_path}'+'/best_policy.pth'))
         policy.eval()
         result = test_collector.collect(
             n_episode=test_collector.env_num, 
