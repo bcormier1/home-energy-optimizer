@@ -60,9 +60,9 @@ def main(args):
     
     # Initialise the wandb logger
     logger = WandbLogger(
-        save_interval=1000,
+        save_interval=1,
         train_interval=10,
-        update_interval=10,
+        update_interval=1,
         project="RL_project", 
         entity="w266_wra",
         config=settings
@@ -160,12 +160,15 @@ def train_agent(config, logger, log_path):
         net, 
         action_shape, 
         softmax_output=False, 
-        device=device
+        device=device,
     ).to(device)
     actor_optim = torch.optim.Adam(actor.parameters(), lr=config.actor_lr)
     
     # Critics
-    net_c1 = Net(obs_shape, hidden_sizes=hidden_sizes, device=device)
+    net_c1 = Net(
+        obs_shape, 
+        hidden_sizes=hidden_sizes,
+        device=device)
     critic1 = Critic(
         net_c1, 
         last_size=action_shape, 
@@ -173,7 +176,10 @@ def train_agent(config, logger, log_path):
     ).to(device)
     critic1_optim = torch.optim.Adam(critic1.parameters(), lr=config.critic_lr)
     
-    net_c2 = Net(obs_shape, hidden_sizes=hidden_sizes, device=device)
+    net_c2 = Net(
+        obs_shape, 
+        hidden_sizes=hidden_sizes, 
+        device=device)
     critic2 = Critic(
         net_c2, 
         last_size=action_shape,
@@ -308,7 +314,7 @@ def train_agent(config, logger, log_path):
         logger=logger,
         step_per_collect= config.steps_per_collect,
         update_per_step= 0.01,# 1 / config.steps_per_collect,
-        test_in_train=False,
+        test_in_train=True,
         resume_from_log=config.resume_id is not None,
         save_checkpoint_fn=save_checkpoint_fn,
     )
