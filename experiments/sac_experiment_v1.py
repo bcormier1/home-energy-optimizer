@@ -61,8 +61,8 @@ def main(args):
     # Initialise the wandb logger
     logger = WandbLogger(
         save_interval=1000,
-        #run_id=settings.get('run_id',None),
-        #name=settings.get('run_name',None),
+        train_interval=10,
+        update_interval=10,
         project="RL_project", 
         entity="w266_wra",
         config=settings
@@ -307,7 +307,7 @@ def train_agent(config, logger, log_path):
         save_best_fn=save_best_fn,
         logger=logger,
         step_per_collect= config.steps_per_collect,
-        update_per_step= 1 / config.steps_per_collect,
+        update_per_step= 0.01,# 1 / config.steps_per_collect,
         test_in_train=False,
         resume_from_log=config.resume_id is not None,
         save_checkpoint_fn=save_checkpoint_fn,
