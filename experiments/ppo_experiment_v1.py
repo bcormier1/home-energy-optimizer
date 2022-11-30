@@ -20,14 +20,18 @@ from data.data_utils import (
 
 import gym
 from gym import spaces, wrappers
-from gym_homer.envs.homer_env import HomerEnv
+from gym_homer.envs.homer_env_dev import HomerEnv
 
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
 from torch import nn
 
 from tianshou.utils import WandbLogger
-from tianshou.data import Collector, VectorReplayBuffer
+from tianshou.data import (
+    Collector, 
+    VectorReplayBuffer, 
+    PrioritizedVectorReplayBuffer
+)
 from tianshou.env import SubprocVectorEnv
 from tianshou.policy import PPOPolicy, ICMPolicy
 from tianshou.trainer import onpolicy_trainer
@@ -50,7 +54,6 @@ def main(args):
     
     # Set up logs
     now = datetime.datetime.now().strftime("%y%m%d-%H%M%S")
-    config.algo_name = "ppo"
     log_name = os.path.join(config.task, config.algo_name, now)
     log_path = os.path.join(config.log_path, log_name) 
     
@@ -65,10 +68,10 @@ def main(args):
     # Initialise the wandb logger
     logger = WandbLogger(
         save_interval=1000,
-        #run_id=settings.get('run_id',None),
-        #name=settings.get('run_name',None),
         project="RL_project", 
         entity="w266_wra",
+        train_interval=10,
+        update_interval=10,
         config=settings
         )
     writer = SummaryWriter(config.log_path)
@@ -87,6 +90,9 @@ def main(args):
             else:
                 settings.update({wandb_key: wandb_val})
             print(f"Sweep Argument Check: {wandb_key}: {settings[wandb_key]}")
+        # Update config. 
+        for k,v in settings.items():
+            setattr(config, k, v)
     
     policy = None
     test_collector = None
@@ -262,10 +268,18 @@ def train_agent(config, logger, log_path):
     
     # replay buffer: `save_last_obs` and `stack_num` can be removed together
     # when you have enough RAM
-    buffer = VectorReplayBuffer(
-        total_size=config.replay_buffer_collector,
-        buffer_num=len(train_envs)
-    )
+    if config.prioritized_replay_buffer:
+        buffer = PrioritizedVectorReplayBuffer(
+            config.replay_buffer_collector,
+            buffer_num=len(train_envs),
+            alpha=config.alpha,
+            beta=config.beta,
+        )
+    else:
+        buffer = VectorReplayBuffer(
+            total_size=config.replay_buffer_collector,
+            buffer_num=len(train_envs)
+        )
     print(f'Buffer Loaded with length {len(buffer)}')    
     train_collector = Collector(
         policy, 
@@ -301,15 +315,9 @@ def train_agent(config, logger, log_path):
 
     def save_checkpoint_fn(epoch, env_step, gradient_step):
         ckpt_path = os.path.join(log_path, f"checkpoint_{epoch}.pth")
-        torch.save(
-            {
-                "model": policy.state_dict(), 
-                "optim": optim.state_dict()
-            }, ckpt_path
-        )
+        torch.save({"model": policy.state_dict(), "optim": optim.state_dict()}, 
+                    ckpt_path)
         print(f"Checkpoint saved to {ckpt_path}")
-        buffer_path = os.path.join(log_path, f"train_buffer_{epoch}.pkl")
-        pickle.dump(train_collector.buffer, open(buffer_path, "wb"))
         return ckpt_path
     
     print("Running training")
@@ -338,7 +346,7 @@ def train_agent(config, logger, log_path):
 def do_eval(config, policy, test_collector):
     
     # Create test envs
-    test_envs, device_list = load_homer_env(config, 'validation')
+    test_envs, device_list = load_homer_env(config, 'test')
     print("Loaded test environments")
     
     # Load test collector with new test envs. 
@@ -388,13 +396,8 @@ def load_homer_env(config, data_subset, example=False):
 
     file_loader = DataLoader(config, data_subset)
     
-    # If test, we need to supply the save data
-    #if data_subset == 'test' and config.save_test_data:
     history = config.save_test_data
     result_path = config.result_path 
-    #else: #Don't save. 
-    #    history = False
-    #    result_path = ""
 
     if config.pricing_env == 'dummy':
         device_list = ['dummy' for _ in range(config.n_dummy_envs)]
@@ -443,6 +446,46 @@ def load_homer_env(config, data_subset, example=False):
                     discrete=config.discrete_env,
                     charge_rate=config.charge_rate,
                     action_intervals=config.action_intervals,
+                    exportable=config.exportable,
+                    importable=config.importable,
+                    benchmarks=config.benchmarks,
+                    save_history=history,
+                    save_path=result_path,
+                    device_id=device_list[i]
+                ) for i in range(n_devices)
+            ]            
+            envs = SubprocVectorEnv(env_list)
+            print(f"Sucessfully loaded {n_devices} environments")
+    
+    elif config.pricing_env == 'debug':
+        device_list = file_loader.device_list
+        if example:
+            # Load a single example to get env dimensions.
+            envs =  HomerEnv(
+                data=file_loader._load_device(device_list[0]), 
+                start_soc=config.start_soc, 
+                discrete=config.discrete_env,
+                charge_rate=config.charge_rate,
+                action_intervals=config.action_intervals
+            ) 
+        else:
+            n_devices = file_loader.n_devices
+            env_list = [
+                lambda i=i: HomerEnv(
+                    data=file_loader._load_device(device_list[i], 
+                                                 truncate=config.truncate, 
+                                                 max_days=config.n_days,
+                                                 val_offset=config.val_offset,
+                                                 n_days_train=config.n_days_train,
+                                                 n_days_val=config.n_days_val,
+                                                 n_days_test=config.n_days_val), 
+                    start_soc=config.start_soc, 
+                    discrete=config.discrete_env,
+                    charge_rate=config.charge_rate,
+                    action_intervals=config.action_intervals,
+                    exportable=config.exportable,
+                    importable=config.importable,
+                    benchmarks=config.benchmarks,
                     save_history=history,
                     save_path=result_path,
                     device_id=device_list[i]

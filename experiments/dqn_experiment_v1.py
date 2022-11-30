@@ -7,7 +7,6 @@ import argparse
 import torch
 import datetime
 import wandb
-import pickle
 
 #set working dir and path. 
 parent_dir = os.getcwd()
