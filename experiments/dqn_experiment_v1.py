@@ -451,7 +451,8 @@ def load_homer_env(config, data_subset, example=False):
                 start_soc=config.start_soc, 
                 discrete=config.discrete_env,
                 charge_rate=config.charge_rate,
-                action_intervals=config.action_intervals
+                action_intervals=config.action_intervals,
+                episode_length=config.episode_length,
             ) 
         else:
             n_devices = file_loader.n_devices

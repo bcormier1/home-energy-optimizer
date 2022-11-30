@@ -27,12 +27,24 @@ parameters:
     max: 4
     min: 2
   replay_buffer_collector:
-    values: [10000, 100000, 500000, 1000000, 2000000]
+    values: [500000, 1000000, 2000000]
+  batch_size:
+    values: [256, 512, 1024, 2048]
   eps_test:
     distribution: uniform
     max: 0.1
     min: 0.02
   eps_train:
     distribution: uniform
-    max: 0.3
+    max: 0.2
     min: 0.1
+  exportable: 
+    distribution: categorical
+    values:
+      - "true"
+      - "false"  
+  importable: 
+    distribution: categorical
+    values:
+      - "true"
+      - "false"

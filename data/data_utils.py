@@ -127,12 +127,12 @@ class DataLoader():
         # Truncate the dataset        
         if n <= len(data) and n > 0:
             if self.subset == 'train' or self.subset == 'test':
-                return data.loc[0:n,].copy()
+                return data.head(n)
             else:
                 if val_offset == 0:
-                    return data.tail(n).copy()
+                    return data.tail(n)
                 else:
-                    return data.loc[val_offset:,].copy
+                    return data.loc[val_offset:,].copy()
         else:
             print(f"loaded {len(data)} steps from {fname}")
             return data
