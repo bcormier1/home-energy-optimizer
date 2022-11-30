@@ -7,6 +7,7 @@ Authors: Andi Morey Peterson, Alexander To and Brody Cormier
 Version: v2
 """
 
+
 from datetime import datetime
 from typing import Any, Dict, Tuple
 import numpy as np
@@ -33,13 +34,15 @@ class HomerEnv(gym.Env):
     def __init__(self, capacity=14, start_soc='full', render_mode=None,
                  discrete=True, data=None, charge_rate=5, action_intervals=1,
                  save_history=False, save_path="", device_id=None, 
-                 benchmarks=True, exportable=True, importable=True) -> None:
+                 benchmarks=True, exportable=True, importable=True,
+                 episode_length=0) -> None:
 
         """
         Initialises a HOMER Env.
         """
         self.print_save = False  # Whether to print and save unique data summary and actions.
         self.benchmarks = benchmarks
+        self.episode_length = episode_length
         # Set data and devices
         self.discrete = discrete
         self.df = data
@@ -60,6 +63,9 @@ class HomerEnv(gym.Env):
         self.discharge_rate = charge_rate
 
         # Episode
+        self.episode = False if self.episode_length == 0 else True
+        self.max_episode_steps = len(self.data_arr)
+        self.n_env_epochs = 0
         self.start_tick = 0
         self._current_tick = None
         self._end_tick = None
@@ -105,10 +111,25 @@ class HomerEnv(gym.Env):
         # We need the following line to seed self.np_random
         super().reset(seed=seed)
 
-        # Reset reward and history
+        # Reset reward and history, set Episode length
+        if self.episode:
+            # Get start and end  indexes for each episode.
+            self.episode_index_list = self._get_intervals()
+            # Internal counter for number of runs through the complete data.
+            self.ep_idx = self.n_env_epochs % self.n_episodes
+            # Set current and end ticks
+            self._current_tick = self.episode_index_list[self.ep_idx] # Could fix at zero
+            self._end_tick = self.episode_index_list[self.ep_idx + 1]
+            if self.ep_idx == 0:
+                self.history = None # Reset history array -> maybe add a flag?
+        else:
+            self.history = None
+            self._current_tick = self.start_tick
+            self._end_tick = len(self.df) - 1
+        
         self.cumulative_reward = 0
-        self.history = None
-        self.updated_action = None
+        self.updated_action = None        
+        self.n_env_epochs += 1
 
         # Reset battery in line with initial operating conditions.
         self.battery = battery(capacity=self.start_capacity,
@@ -131,10 +152,6 @@ class HomerEnv(gym.Env):
                                       exportable=False,
                                       charge_rate=self.charge_rate,
                                       discharge_rate=self.discharge_rate)
-
-        # Set first and last tick
-        self._current_tick = self.start_tick
-        self._end_tick = len(self.df) - 1
 
         # Get Initial observation and do first step:
         first_obs = self._get_obs()
@@ -219,10 +236,10 @@ class HomerEnv(gym.Env):
         self.updated_action = 0
         # Calculate net
         self.net, self.e_flux = self._apply_action(
-            self.action,
+            self.updated_action,
             obs[self.idx['loads']] + obs[self.idx['solar']]
         )
-        
+
         # Calculate Reward
         self.reward = self._calculate_reward(self.net,
                                              obs[self.idx['export_tariff']],
@@ -294,6 +311,19 @@ class HomerEnv(gym.Env):
 
         return info_dict, extra_info
 
+    def _get_intervals(self):
+        
+        # Get number of complete episodes of length episode_length
+        if self.max_episode_steps < self.episode_length:
+            raise Exception(f'Episode length {self.max_episode_steps} '
+                            f'cannot be less than the total data lenghth {self.episode_length}!')
+        self.n_episodes = self.max_episode_steps // self.episode_length
+        r = self.max_episode_steps % self.episode_length 
+        # Create a list of indexes, add remainder to last interval endpoint. 
+        index_list = np.arange(0, self.episode_length * self.n_episodes + 1, self.episode_length)
+        index_list[-1] = index_list[-1] + r 
+        return index_list
+
     def _log_step(self, info, extra_info) -> None:
         """
         logs all steps
@@ -356,9 +386,82 @@ class HomerEnv(gym.Env):
             reward = net * tariff
         else:
             reward = 0
-
+        
         return float(reward)
+    
+    #def _calculate_financial_reward(self, net, export_tariff, import_tariff
+    #) -> float:
+    #    if net > 0: # Excess load
+    #        pass# How much the sq battery cou
+    #    elif net < 0: # Excess solar
+    #        pass
+    #    return float(reward)
 
+    def save_results(self) -> None:
+
+        # Save
+        obs = pd.DataFrame(data=self.data_arr, columns=self.df.columns)
+        info = pd.DataFrame(self.history)
+        # Add back in time data. 
+        if self.df_index is not None:
+            df2 = pd.merge(self.df_index, obs, left_index=True, right_index=True)
+            results = pd.merge(df2, info, left_index=True, right_index=True)
+        else:
+            results = pd.merge(obs, info, left_index=True, right_index=True)
+        device = self.device_id if self.device_id != None else "dummy"
+        # Add Device Column
+        results.loc[:, 'device_id'] = device
+        if self.print_save:
+            print(results['updated_action'].value_counts())
+            results.to_csv(
+                self.save_path+f"/{device}_results_array_{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}.csv",
+                index=False
+            )
+        else:
+            results.to_csv(self.save_path + f"/{device}_results_array.csv", index=False)
+
+    def _process_data(self) -> None:
+        """
+        Import data from the passed dataframe into a numpy array.
+        all operations performed inplace for speed.
+        """
+        self.df_index = None
+        
+        # Enumerate column indx - useful for indexing later
+        remove_list = ['Datetime', 'Timestamp']
+        c_list = self.df.columns.tolist()
+        self.obs_shape = len(c_list)
+        if 'Datetime' in c_list and 'Timestamp' in c_list:
+            _ = [c_list.remove(x) for x in remove_list]
+            self.df_index = self.df[remove_list].reset_index()
+            self.df = self.df[c_list]
+        self.idx = {k: v for v, k in enumerate(self.df.columns)}
+        self.data_arr = self.df[c_list].to_numpy(dtype=np.float32)
+
+    def seed(self, seed) -> None:
+        np.random.seed(seed)
+        
+    def calc_benchmark_rewards(self, loads, solar, export_tariff,
+                               import_tariff) -> None:
+            
+        # Calculate step rewards
+        self.no_solar_reward = self._calculate_reward(loads,
+                                                      export_tariff,
+                                                      import_tariff)
+
+        self.no_battery_reward = self._calculate_reward(loads + solar,
+                                                        export_tariff,
+                                                        import_tariff)
+
+        self.sq_reward = self._calculate_reward(self.sq_net,
+                                                export_tariff,
+                                                import_tariff)
+
+        # Update Cumulative 
+        self.no_solar_cumulative_reward += self.no_solar_reward
+        self.no_battery_cumulative_reward += self.no_battery_reward
+        self.sq_cumulative_reward += self.sq_reward
+    
     def render(self, mode='human') -> None:
         if mode == 'human':
             fig, axs = plt.subplots(1, 2, layout="constrained")
@@ -423,69 +526,3 @@ class HomerEnv(gym.Env):
 
     def save_rendering(self, filepath) -> None:
         plt.savefig(f'{filepath}_{str(self._current_tick)}.png')
-
-    def save_results(self) -> None:
-
-        # Save
-        obs = pd.DataFrame(data=self.data_arr, columns=self.df.columns)
-        info = pd.DataFrame(self.history)
-        # Add back in time data. 
-        if self.df_index is not None:
-            df2 = pd.merge(self.df_index, obs, left_index=True, right_index=True)
-            results = pd.merge(df2, info, left_index=True, right_index=True)
-        else:
-            results = pd.merge(obs, info, left_index=True, right_index=True)
-        device = self.device_id if self.device_id != None else "dummy"
-        # Add Device Column
-        results.loc[:, 'device_id'] = device
-        if self.print_save:
-            print(results['updated_action'].value_counts())
-            results.to_csv(
-                self.save_path+f"/{device}_results_array_{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}.csv",
-                index=False
-            )
-        else:
-            results.to_csv(self.save_path + f"/{device}_results_array.csv", index=False)
-
-    def _process_data(self) -> None:
-        """
-        Import data from the passed dataframe into a numpy array.
-        all operations performed inplace for speed.
-        """
-        self.df_index = None
-        
-        # Enumerate column indx - useful for indexing later
-        remove_list = [
-            'Datetime', 'Timestamp', 'weekday','month_x','month_y','region_1','region_2','region_3',]
-        c_list = self.df.columns.tolist()
-        self.obs_shape = len(c_list)
-        if 'Datetime' in c_list and 'Timestamp' in c_list:
-            _ = [c_list.remove(x) for x in remove_list]
-            self.df_index = self.df[remove_list].reset_index()
-            self.df = self.df[c_list]
-        self.idx = {k: v for v, k in enumerate(self.df.columns)}
-        self.data_arr = self.df[c_list].to_numpy(dtype=np.float32)
-
-    def seed(self, seed) -> None:
-        np.random.seed(seed)
-        
-    def calc_benchmark_rewards(self, loads, solar, export_tariff,
-                               import_tariff) -> None:
-            
-        # Calculate step rewards
-        self.no_solar_reward = self._calculate_reward(loads,
-                                                      export_tariff,
-                                                      import_tariff)
-
-        self.no_battery_reward = self._calculate_reward(loads + solar,
-                                                        export_tariff,
-                                                        import_tariff)
-
-        self.sq_reward = self._calculate_reward(self.sq_net,
-                                                export_tariff,
-                                                import_tariff)
-
-        # Update Cumulative 
-        self.no_solar_cumulative_reward += self.no_solar_reward
-        self.no_battery_cumulative_reward += self.no_battery_reward
-        self.sq_cumulative_reward += self.sq_reward

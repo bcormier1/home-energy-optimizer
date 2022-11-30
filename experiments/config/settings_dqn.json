@@ -51,10 +51,12 @@
     "action_intervals":1,
     "truncate":false,
     "n_days":90,
+    "episode_length": 144,
+    "train_is_val": false,
     "n_days_train":90,
     "n_days_val":30,
     "n_days_test":30,
-    "val_offset":15,
+    "val_offset":0,
     "eval_n_repeats":1,
     "save_test_data":true
 }
