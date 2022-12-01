@@ -72,6 +72,8 @@ class HomerEnv(gym.Env):
         self.reward = None
         self.cumulative_reward = None
         self.action = None
+        self.global_tick = 0
+        self.data_tick = None
         
         if self.benchmarks:
             self.sq_net = None
@@ -119,7 +121,7 @@ class HomerEnv(gym.Env):
             self.ep_idx = self.n_env_epochs % self.n_episodes
             # Set current and end ticks
             self._current_tick = self.episode_index_list[self.ep_idx] # Could fix at zero
-            self._end_tick = self.episode_index_list[self.ep_idx + 1]
+            self._end_tick = self.episode_index_list[self.ep_idx + 1] - 1
             if self.ep_idx == 0:
                 self.history = None # Reset history array -> maybe add a flag?
         else:
@@ -127,6 +129,7 @@ class HomerEnv(gym.Env):
             self._current_tick = self.start_tick
             self._end_tick = len(self.df) - 1
         
+        self.data_tick = 0
         self.cumulative_reward = 0
         self.updated_action = None        
         self.n_env_epochs += 1
@@ -156,7 +159,6 @@ class HomerEnv(gym.Env):
         # Get Initial observation and do first step:
         first_obs = self._get_obs()
         self._do_first_step(first_obs)
-
         # Get observation and info
         info, extra_info = self._get_info()
         self._log_step(info, extra_info)
@@ -174,6 +176,7 @@ class HomerEnv(gym.Env):
         """
         # Take a step, update observation index.
         self._current_tick += 1
+        self._update_ticks()
         self.action = action
         obs = self._get_obs()
 
@@ -271,6 +274,7 @@ class HomerEnv(gym.Env):
         # get limits
         solar = self.data_arr[c:c + 1, s:s + 1]
         loads = self.data_arr[c:c + 1, l:l + 1]
+
         max_d, max_c = self.battery.get_limits(solar, loads)
         # Update observations
         self.data_arr[c:c+1, md:md+1] = max_d
@@ -294,6 +298,9 @@ class HomerEnv(gym.Env):
         # Extra info for logging/debug
         extra_info = {
             "tick": self._current_tick,
+            "data_tick": self.data_tick,
+            "global_tick": self.global_tick,
+            "env_epochs": self.n_env_epochs,
             "cumulative_reward": self.cumulative_reward,
         }
         if self.benchmarks:
@@ -310,6 +317,10 @@ class HomerEnv(gym.Env):
             extra_info = extra_info | benchmark_info
 
         return info_dict, extra_info
+
+    def _update_ticks(self) -> None:
+        self.data_tick += 1
+        self.global_tick += 1
 
     def _get_intervals(self):
         

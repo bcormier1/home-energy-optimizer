@@ -182,7 +182,8 @@ def train_agent(config, logger, log_path):
             device=device
         )
     else:
-        raise Exception(f"Only 'dqn' and 'rainbow' algorithms supported, received {config.algo_name}")
+        raise Exception(f"Only 'dqn' and 'rainbow' algorithms supported,"
+                        f"received {config.algo_name}")
     
     print(f"Environment Action space: {env.action_space}")
     print(f"Environment Action shape: {action_shape}")
