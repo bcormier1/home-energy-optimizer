@@ -18,6 +18,8 @@ class DataLoader():
         self.subset = data_subset
         self.dataset_type = config.pricing_env
         self.path = os.path.dirname(os.getcwd())
+        self.episodes = False if config.episode_length == 0 else True
+        self.train_is_val = config.train_is_val
         self.load_data(config)
         self.debug = True if self.dataset_type == 'debug' else False
 
@@ -96,9 +98,8 @@ class DataLoader():
         print(f"loaded {len(data)} steps from {fname}")
         return data
     
-    def _load_device(self, device, truncate=False, max_days=None, 
-                    val_offset=10, n_days_train=-1, n_days_val=-1,
-                    n_days_test=-1):
+    def _load_device(self, device, val_offset=0,
+                    n_days_train=-1, n_days_val=-1, n_days_test=-1):
         """
         Loads the data for a particular device assuming that device has it's own
         file according to format:
@@ -106,23 +107,32 @@ class DataLoader():
         returns a data frame 
         """
         # Load file
+
         if self.debug:
             data_dir = self.path+f"/data/{self.dataset_type}/"+self.subset+"/"
         else:
-            data_dir = self.path+f"/data/{self.dataset_type}_pricing/"+self.subset+"/"
+            if self.train_is_val and self.subset == 'validation':
+                data_dir = self.path+f"/data/{self.dataset_type}_pricing/train/"
+            else:
+                data_dir = self.path+f"/data/{self.dataset_type}_pricing/"+self.subset+"/"
         fname = f"{device}_{self.dataset_type}_{self.subset}.parquet"
         data = pd.read_parquet(data_dir+fname).fillna(0)
                 
         if self.subset == 'train':
-            n = n_days_train
+            n = n_days_train * 12 * 24
         elif self.subset == 'validation':
-            n = n_days_val
+            n = (n_days_val + val_offset) * 12 * 24 if n_days_val != -1 else n_days_val
         elif self.subset == 'test':
-            n = n_days_test
-        # Truncate the dataset
-        if len(data) >= n:
-            print(f"loaded truncated {n * 24 * 12} steps from {fname}")
-            return data.head(n * 24 * 12)
+            n = n_days_test * 12 * 24
+        # Truncate the dataset        
+        if n <= len(data) and n > 0:
+            if self.subset == 'train' or self.subset == 'test':
+                return data.head(n)
+            else:
+                if val_offset == 0:
+                    return data.tail(n)
+                else:
+                    return data.loc[val_offset:,].copy()
         else:
             print(f"loaded {len(data)} steps from {fname}")
             return data

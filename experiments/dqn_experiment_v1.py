@@ -182,7 +182,8 @@ def train_agent(config, logger, log_path):
             device=device
         )
     else:
-        raise Exception(f"Only 'dqn' and 'rainbow' algorithms supported, received {config.algo_name}")
+        raise Exception(f"Only 'dqn' and 'rainbow' algorithms supported,"
+                        f"received {config.algo_name}")
     
     print(f"Environment Action space: {env.action_space}")
     print(f"Environment Action shape: {action_shape}")
@@ -451,15 +452,14 @@ def load_homer_env(config, data_subset, example=False):
                 start_soc=config.start_soc, 
                 discrete=config.discrete_env,
                 charge_rate=config.charge_rate,
-                action_intervals=config.action_intervals
+                action_intervals=config.action_intervals,
+                episode_length=config.episode_length,
             ) 
         else:
             n_devices = file_loader.n_devices
             env_list = [
                 lambda i=i: HomerEnv(
                     data=file_loader._load_device(device_list[i], 
-                                                 truncate=config.truncate, 
-                                                 max_days=config.n_days,
                                                  val_offset=config.val_offset,
                                                  n_days_train=config.n_days_train,
                                                  n_days_val=config.n_days_val,
@@ -471,6 +471,7 @@ def load_homer_env(config, data_subset, example=False):
                     exportable=config.exportable,
                     importable=config.importable,
                     benchmarks=config.benchmarks,
+                    episode_length=config.episode_length,
                     save_history=history,
                     save_path=result_path,
                     device_id=device_list[i]
