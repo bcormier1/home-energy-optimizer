@@ -244,11 +244,13 @@ def train_agent(config, logger, log_path):
             buffer_num=len(train_envs),
             alpha=config.alpha,
             beta=config.beta,
+            stack_num=config.frames_stack
         )
     else:
         buffer = VectorReplayBuffer(
             config.replay_buffer_collector,
-            buffer_num=len(train_envs)
+            buffer_num=len(train_envs),
+            stack_num=config.frames_stack
         )
     print('Buffer Loaded')    
     train_collector = Collector(
@@ -352,7 +354,7 @@ def do_eval(config, policy, test_collector):
         test_collector = Collector(
             policy, 
             test_envs,
-            exploration_noise=True
+            exploration_noise=False
         )
         policy.eval()
         result = test_collector.collect(

@@ -74,7 +74,6 @@ class HomerEnv(gym.Env):
         self.cumulative_reward = None
         self.action = None
         self.global_tick = 0
-        self.episode_tick = None
         
         if self.benchmarks:
             self.sq_net = None
@@ -124,17 +123,19 @@ class HomerEnv(gym.Env):
             self._current_tick = self.episode_index_list[self.ep_idx]
             self._end_tick = self.episode_index_list[self.ep_idx + 1] - 1
             if self.ep_idx == 0:
-                self.history = None # Reset history array -> maybe add a flag?
+                self.history = None
+                self.n_env_epochs = 0 if self.n_env_epochs == 0 else self.n_env_epochs +=1
         else:
             self.history = None
             self._current_tick = self.start_tick
             self._end_tick = len(self.df) - 1
+            self.n_env_epochs = 0 if self.n_env_epochs == 0 else self.n_env_epochs +=1
         
         self.global_tick = 0 if self.global_tick == 0 else self.global_tick + 1
         self.episode_tick = 0
         self.cumulative_reward = 0
         self.updated_action = None        
-        self.n_env_epochs += 1
+
 
         # Reset battery in line with initial operating conditions.
         self.battery = battery(capacity=self.start_capacity,
@@ -337,7 +338,8 @@ class HomerEnv(gym.Env):
         r = self.max_episode_steps % self.episode_length 
         # Create a list of indexes, add remainder to last interval endpoint. 
         index_list = np.arange(0, self.episode_length * self.n_episodes + 1, self.episode_length)
-        #index_list[-1] = index_list[-1] + r 
+        #index_list[-1] = index_list[-1] + r # Uncomment to make uneven intervals
+        
         return index_list
 
     def _log_step(self, info, extra_info) -> None:
