@@ -40,6 +40,7 @@ class HomerEnv(gym.Env):
         """
         Initialises a HOMER Env.
         """
+        self.standard = False
         self.print_save = False  # Whether to print and save unique data summary and actions.
         self.benchmarks = benchmarks
         self.episode_length = episode_length
@@ -73,7 +74,7 @@ class HomerEnv(gym.Env):
         self.cumulative_reward = None
         self.action = None
         self.global_tick = 0
-        self.data_tick = None
+        self.episode_tick = None
         
         if self.benchmarks:
             self.sq_net = None
@@ -120,7 +121,7 @@ class HomerEnv(gym.Env):
             # Internal counter for number of runs through the complete data.
             self.ep_idx = self.n_env_epochs % self.n_episodes
             # Set current and end ticks
-            self._current_tick = self.episode_index_list[self.ep_idx] # Could fix at zero
+            self._current_tick = self.episode_index_list[self.ep_idx]
             self._end_tick = self.episode_index_list[self.ep_idx + 1] - 1
             if self.ep_idx == 0:
                 self.history = None # Reset history array -> maybe add a flag?
@@ -129,7 +130,8 @@ class HomerEnv(gym.Env):
             self._current_tick = self.start_tick
             self._end_tick = len(self.df) - 1
         
-        self.data_tick = 0
+        self.global_tick = 0 if self.global_tick == 0 else self.global_tick + 1
+        self.episode_tick = 0
         self.cumulative_reward = 0
         self.updated_action = None        
         self.n_env_epochs += 1
@@ -221,9 +223,12 @@ class HomerEnv(gym.Env):
         self._log_step(info, extra_info)
 
         # Save output dataframe.
-        if done and self.save_history and self.env_best < self.cumulative_reward:
+        if done and self.save_history and not self.episode:
+            if self.env_best < self.cumulative_reward:
+                self.save_results()
+                self.env_best = self.cumulative_reward
+        elif done and self.save_history:
             self.save_results()
-            self.env_best = self.cumulative_reward
 
         if self.render_mode == "human":
             self._render_frame()
@@ -289,7 +294,7 @@ class HomerEnv(gym.Env):
         """
         # Info for the agent
         info_dict = {
-            "reward": self.reward, 
+            "reward": self.reward / 100, 
             "net": self.net, 
             "action":self.action,
             "updated_action":self.updated_action,
@@ -298,7 +303,7 @@ class HomerEnv(gym.Env):
         # Extra info for logging/debug
         extra_info = {
             "tick": self._current_tick,
-            "data_tick": self.data_tick,
+            "episode_tick": self.episode_tick,
             "global_tick": self.global_tick,
             "env_epochs": self.n_env_epochs,
             "cumulative_reward": self.cumulative_reward,
@@ -319,7 +324,7 @@ class HomerEnv(gym.Env):
         return info_dict, extra_info
 
     def _update_ticks(self) -> None:
-        self.data_tick += 1
+        self.episode_tick+= 1
         self.global_tick += 1
 
     def _get_intervals(self):
@@ -332,7 +337,7 @@ class HomerEnv(gym.Env):
         r = self.max_episode_steps % self.episode_length 
         # Create a list of indexes, add remainder to last interval endpoint. 
         index_list = np.arange(0, self.episode_length * self.n_episodes + 1, self.episode_length)
-        index_list[-1] = index_list[-1] + r 
+        #index_list[-1] = index_list[-1] + r 
         return index_list
 
     def _log_step(self, info, extra_info) -> None:
@@ -358,7 +363,6 @@ class HomerEnv(gym.Env):
         """
         # requires battery._get_limits() having been called in .step().
         max_d_, max_c_ = self.battery.battery_limits
-
         if action > 0: # Charge
             if self.importable:
                 charge_request = action * self.battery.max_input
@@ -399,14 +403,6 @@ class HomerEnv(gym.Env):
             reward = 0
         
         return float(reward)
-    
-    #def _calculate_financial_reward(self, net, export_tariff, import_tariff
-    #) -> float:
-    #    if net > 0: # Excess load
-    #        pass# How much the sq battery cou
-    #    elif net < 0: # Excess solar
-    #        pass
-    #    return float(reward)
 
     def save_results(self) -> None:
 
@@ -425,7 +421,8 @@ class HomerEnv(gym.Env):
         if self.print_save:
             print(results['updated_action'].value_counts())
             results.to_csv(
-                self.save_path+f"/{device}_results_array_{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}.csv",
+                self.save_path+f"/{device}_results_array_"
+                f"{datetime.now().strftime('%Y_%m_%d_%H_%M_%S')}.csv",
                 index=False
             )
         else:

@@ -28,16 +28,10 @@ parameters:
     min: 2
   replay_buffer_collector:
     values: [500000, 1000000, 2000000]
+  hidden_layer_dims:
+    values: [32, 64, 128]
   batch_size:
     values: [256, 512, 1024, 2048]
-  eps_test:
-    distribution: uniform
-    max: 0.1
-    min: 0.02
-  eps_train:
-    distribution: uniform
-    max: 0.2
-    min: 0.1
   exportable: 
     distribution: categorical
     values:

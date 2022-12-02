@@ -48,10 +48,10 @@ class DataLoader():
         else:
             device_dir = self.path+f"/data/{self.dataset_type}_pricing/device_list.csv"
         try:
+            print(device_dir)
             device_list = pd.read_csv(device_dir)['device_id'].tolist()
         except:
             print("Could not load device list")
-        
         return device_list
         
     
@@ -110,32 +110,36 @@ class DataLoader():
 
         if self.debug:
             data_dir = self.path+f"/data/{self.dataset_type}/"+self.subset+"/"
+            fname = f"{device}_{self.dataset_type}_{self.subset}.parquet"
         else:
             if self.train_is_val and self.subset == 'validation':
                 data_dir = self.path+f"/data/{self.dataset_type}_pricing/train/"
+                fname = f"{device}_{self.dataset_type}_train.parquet"
             else:
                 data_dir = self.path+f"/data/{self.dataset_type}_pricing/"+self.subset+"/"
-        fname = f"{device}_{self.dataset_type}_{self.subset}.parquet"
+                fname = f"{device}_{self.dataset_type}_{self.subset}.parquet"
+        
         data = pd.read_parquet(data_dir+fname).fillna(0)
                 
         if self.subset == 'train':
-            n = n_days_train * 12 * 24
+            n = n_days_train * 288
         elif self.subset == 'validation':
-            n = (n_days_val + val_offset) * 12 * 24 if n_days_val != -1 else n_days_val
+            n = (n_days_val + val_offset) * 288
+            n = abs(n) * -1 if n_days_val == -1 else abs(n)
         elif self.subset == 'test':
-            n = n_days_test * 12 * 24
-        # Truncate the dataset        
+            n = n_days_test * 288
+        # Truncate the dataset       
         if n <= len(data) and n > 0:
             if self.subset == 'train' or self.subset == 'test':
-                return data.head(n)
+                data = data.head(n)
             else:
-                if val_offset == 0:
-                    return data.tail(n)
-                else:
-                    return data.loc[val_offset:,].copy()
+                data = data.tail(n).loc[val_offset:,].copy()
         else:
-            print(f"loaded {len(data)} steps from {fname}")
-            return data
+            if self.subset == 'validation':
+                data = data.loc[val_offset:,].copy()
+        
+        print(f"loaded {len(data)} steps from {fname}")
+        return data
 
     def load_dummy_data(self):
         

@@ -286,6 +286,7 @@ def train_agent(config, logger, log_path):
         print(f"Best policy saved to {best_pth}")
 
     def save_checkpoint_fn(epoch, env_step, gradient_step):
+        print('Tried to save!!!')
         ckpt_path = os.path.join(log_path, f"checkpoint_{epoch}.pth")
         torch.save(
             {

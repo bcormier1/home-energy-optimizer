@@ -63,11 +63,11 @@ def main(args):
     
     # Initialise the wandb logger
     logger = WandbLogger(
-        save_interval=1000,
+        save_interval=1,
         project="RL_project", 
         entity="w266_wra",
-        train_interval=10,
-        update_interval=10,
+        train_interval=1,
+        update_interval=1,
         config=settings
         )
     writer = SummaryWriter(config.log_path)
@@ -103,6 +103,7 @@ def main(args):
     if config.do_eval:
         # Do eval
         if policy is None or test_collector is None:
+            # Load policy and test_collector
             print('No Policy or Collector loaded! Skipping evaluation')
         else:
             print('Running evaluation')
@@ -281,8 +282,7 @@ def train_agent(config, logger, log_path):
             }, ckpt_path
         )
         print(f"Checkpoint saved to {ckpt_path}")
-        buffer_path = os.path.join(log_path, f"train_buffer_{epoch}.pkl")
-        pickle.dump(train_collector.buffer, open(buffer_path, "wb"))
+    
         return ckpt_path
     
     # Demo functions from:
@@ -324,6 +324,7 @@ def train_agent(config, logger, log_path):
         save_best_fn=save_best_fn,
         resume_from_log=config.resume_id is not None,
         save_checkpoint_fn=save_checkpoint_fn,
+        test_in_train=True,
     )
     print("Training complete.\nSummary:\n")
     print(result)
@@ -332,6 +333,8 @@ def train_agent(config, logger, log_path):
 def do_eval(config, policy, test_collector):
     
     # Create test envs
+    setattr(config, 'episode_length', 0)
+    setattr(config, 'start_soc', 'full')
     test_envs, device_list = load_homer_env(config, 'test')
     print("Loaded test environments")
     
@@ -345,6 +348,7 @@ def do_eval(config, policy, test_collector):
     df_list = []
     for repeat in range(config.eval_n_repeats):
         # Load test collector with new test envs. 
+        policy.load_state_dict(torch.load(f'{config.result_path}'+'/best_policy.pth'))
         test_collector = Collector(
             policy, 
             test_envs,
@@ -409,41 +413,8 @@ def load_homer_env(config, data_subset, example=False):
                     save_path=result_path) 
                 for i in range(config.n_dummy_envs)]
             )
-    elif config.pricing_env == 'simple':
-        device_list = file_loader.device_list
-        if example:
-            # Load a single example to get env dimensions.
-            envs =  HomerEnv(
-                data=file_loader.load_device(device_list[0]), 
-                start_soc=config.start_soc, 
-                discrete=config.discrete_env,
-                charge_rate=config.charge_rate,
-                action_intervals=config.action_intervals
-            ) 
-        else:
-            n_devices = file_loader.n_devices
-            env_list = [
-                lambda i=i: HomerEnv(
-                    data=file_loader.load_device(device_list[i], 
-                                                 truncate=config.truncate, 
-                                                 max_days=config.n_days,
-                                                 val_offset=config.val_offset), 
-                    start_soc=config.start_soc, 
-                    discrete=config.discrete_env,
-                    charge_rate=config.charge_rate,
-                    action_intervals=config.action_intervals,
-                    exportable=config.exportable,
-                    importable=config.importable,
-                    benchmarks=config.benchmarks,
-                    save_history=history,
-                    save_path=result_path,
-                    device_id=device_list[i]
-                ) for i in range(n_devices)
-            ]            
-            envs = SubprocVectorEnv(env_list)
-            print(f"Sucessfully loaded {n_devices} environments")
     
-    elif config.pricing_env == 'debug':
+    elif config.pricing_env == 'debug' or 'simple':
         device_list = file_loader.device_list
         if example:
             # Load a single example to get env dimensions.
