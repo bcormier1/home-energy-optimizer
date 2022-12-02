@@ -423,41 +423,8 @@ def load_homer_env(config, data_subset, example=False):
                     save_path=result_path) 
                 for i in range(config.n_dummy_envs)]
             )
-    elif config.pricing_env == 'simple':
-        device_list = file_loader.device_list
-        if example:
-            # Load a single example to get env dimensions.
-            envs =  HomerEnv(
-                data=file_loader.load_device(device_list[0]), 
-                start_soc=config.start_soc, 
-                discrete=config.discrete_env,
-                charge_rate=config.charge_rate,
-                action_intervals=config.action_intervals
-            ) 
-        else:
-            n_devices = file_loader.n_devices
-            env_list = [
-                lambda i=i: HomerEnv(
-                    data=file_loader.load_device(device_list[i], 
-                                                 truncate=config.truncate, 
-                                                 max_days=config.n_days,
-                                                 val_offset=config.val_offset), 
-                    start_soc=config.start_soc, 
-                    discrete=config.discrete_env,
-                    charge_rate=config.charge_rate,
-                    action_intervals=config.action_intervals,
-                    exportable=config.exportable,
-                    importable=config.importable,
-                    benchmarks=config.benchmarks,
-                    save_history=history,
-                    save_path=result_path,
-                    device_id=device_list[i]
-                ) for i in range(n_devices)
-            ]            
-            envs = SubprocVectorEnv(env_list)
-            print(f"Sucessfully loaded {n_devices} environments")
     
-    elif config.pricing_env == 'debug':
+    elif config.pricing_env == 'debug' or 'simple':
         device_list = file_loader.device_list
         if example:
             # Load a single example to get env dimensions.
@@ -466,15 +433,14 @@ def load_homer_env(config, data_subset, example=False):
                 start_soc=config.start_soc, 
                 discrete=config.discrete_env,
                 charge_rate=config.charge_rate,
-                action_intervals=config.action_intervals
+                action_intervals=config.action_intervals,
+                episode_length=config.episode_length,
             ) 
         else:
             n_devices = file_loader.n_devices
             env_list = [
                 lambda i=i: HomerEnv(
                     data=file_loader._load_device(device_list[i], 
-                                                 truncate=config.truncate, 
-                                                 max_days=config.n_days,
                                                  val_offset=config.val_offset,
                                                  n_days_train=config.n_days_train,
                                                  n_days_val=config.n_days_val,
@@ -486,6 +452,7 @@ def load_homer_env(config, data_subset, example=False):
                     exportable=config.exportable,
                     importable=config.importable,
                     benchmarks=config.benchmarks,
+                    episode_length=config.episode_length,
                     save_history=history,
                     save_path=result_path,
                     device_id=device_list[i]
