@@ -11,15 +11,7 @@ metric:
   goal: maximize
   name: test/reward
 parameters:
-  action_intervals:
-    distribution: int_uniform
-    max: 2
-    min: 1
-  lr_decay:
-    distribution: categorical
-    values:
-      - "true"
-      - "false"
+    values: [1, 2, 5, 10]
   lr_optimizer:
     values: [0.01, 0.001, 0.0005, 0.00001]
   n_hidden_layers:
@@ -27,18 +19,19 @@ parameters:
     max: 4
     min: 2
   replay_buffer_collector:
-    values: [500000, 1000000, 2000000]
+    values: [500000, 1000000]
   hidden_layer_dims:
     values: [32, 64, 128]
-  batch_size:
-    values: [256, 512, 1024, 2048]
-  exportable: 
-    distribution: categorical
-    values:
-      - "true"
-      - "false"  
-  importable: 
-    distribution: categorical
-    values:
-      - "true"
-      - "false"
+  repeat_per_collector:
+    distribution: int_uniform
+    max: 10
+    min: 2
+  n_est_steps:
+    distribution: int_uniform
+    max: 288
+    min: 12
+  steps_per_collect:
+    distribution: int_uniform
+    max: 288
+    min: 12
+  
