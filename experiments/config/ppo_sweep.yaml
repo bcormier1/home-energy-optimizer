@@ -24,10 +24,6 @@ parameters:
     distribution: uniform
     max: 0.001
     min: 0.0000005
-  n_hidden_layers:
-    distribution: int_uniform
-    max: 4
-    min: 2
   replay_buffer_collector:
     values: [1e6, 2e6, 3e6]
   icm:
