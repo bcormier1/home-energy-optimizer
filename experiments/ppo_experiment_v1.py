@@ -67,11 +67,11 @@ def main(args):
     
     # Initialise the wandb logger
     logger = WandbLogger(
-        save_interval=1000,
+        save_interval=1,
         project="RL_project", 
         entity="w266_wra",
-        train_interval=10,
-        update_interval=10,
+        train_interval=1,
+        update_interval=1,
         config=settings
         )
     writer = SummaryWriter(config.log_path)

@@ -86,7 +86,7 @@ def main(args):
             else:
                 settings.update({wandb_key: wandb_val})
             print(f"Sweep Argument Check: {wandb_key}: {settings[wandb_key]}")
-        # Update onfig. 
+        # Update config. 
         for k,v in settings.items():
             setattr(config, k, v)
     

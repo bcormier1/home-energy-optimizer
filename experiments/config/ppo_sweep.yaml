@@ -22,7 +22,7 @@ parameters:
       - "false"
   lr_optimizer:
     distribution: uniform
-    max: 0.0005
+    max: 0.001
     min: 0.0000005
   n_hidden_layers:
     distribution: int_uniform
@@ -30,10 +30,6 @@ parameters:
     min: 2
   replay_buffer_collector:
     values: [1e6, 2e6, 3e6]
-  episode_length:
-    distribution: int_uniform
-    max: 432
-    min: 144
   icm:
     distribution: categorical
     values:
@@ -44,3 +40,9 @@ parameters:
     values:
       - "true"
       - "false"
+  eps_clip:
+    distribution: uniform
+    max: 0.3
+    min: 0.1
+  repeat_per_collector:
+    values: [1, 2, 4]

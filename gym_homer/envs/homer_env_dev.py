@@ -295,7 +295,7 @@ class HomerEnv(gym.Env):
         """
         # Info for the agent
         info_dict = {
-            "reward": self.reward / 100, 
+            "reward": self.reward, 
             "net": self.net, 
             "action":self.action,
             "updated_action":self.updated_action,
