@@ -11,9 +11,12 @@ metric:
   goal: maximize
   name: test/reward
 parameters:
+  action_intervals:
     values: [1, 2, 5, 10]
   lr_optimizer:
-    values: [0.01, 0.001, 0.0005, 0.00001]
+    distribution: uniform
+    max: 0.0005
+    min: 0.000005
   n_hidden_layers:
     distribution: int_uniform
     max: 4
