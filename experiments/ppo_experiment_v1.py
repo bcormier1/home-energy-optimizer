@@ -68,7 +68,7 @@ def main(args):
     # Initialise the wandb logger
     logger = WandbLogger(
         save_interval=1,
-        project="RL_project", 
+        project="homer_dev", 
         entity="w266_wra",
         train_interval=1,
         update_interval=1,
@@ -193,7 +193,7 @@ def train_agent(config, logger, log_path):
     if config.lr_decay:
         # decay learning rate to 0 linearly
         max_update_num = np.ceil(
-            config.steps_per_epoch / config.steps_per_collect
+            config.steps_per_epoch / config.episode_length#config.steps_per_collect
             ) * config.n_max_epochs
         lr_scheduler = LambdaLR(
             optim, lr_lambda=lambda epoch: 1 - epoch / max_update_num
@@ -320,6 +320,15 @@ def train_agent(config, logger, log_path):
         print(f"Checkpoint saved to {ckpt_path}")
         return ckpt_path
     
+    b1 = config.steps_per_collect == None
+    b2 = config.episode_per_collect == None
+    if b1 != b2:
+        pass
+    else:
+        raise Exception (
+            "Both steps_per_collect or episode_per_collect may not be set, set one to 'null'. "
+        )
+
     print("Running training")
     # see https://tianshou.readthedocs.io/en/master/api/tianshou.trainer.html
     result = onpolicy_trainer(
@@ -332,6 +341,7 @@ def train_agent(config, logger, log_path):
         episode_per_test=config.test_num,
         batch_size=config.batch_size,
         step_per_collect= config.steps_per_collect,
+        episode_per_collect=config.episode_per_collect,
         stop_fn=lambda mean_reward: mean_reward >= config.reward_stop,
         logger=logger,
         verbose=True,
