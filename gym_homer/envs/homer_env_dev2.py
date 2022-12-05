@@ -170,38 +170,50 @@ class HomerEnv(gym.Env):
         self.action = action
         obs = self._get_obs()
 
+        if self.complex:
+            export_tariff = obs[self.idx['rrp_x']]
+            import_tariff = obs[self.idx['rrp_x']] * -1
+            loads =  obs[self.idx['Home Consumption']]
+            solar = obs[self.idx['Solar Consumption']]
+        else:
+            export_tariff = obs[self.idx['export_tariff']]
+            import_tariff = obs[self.idx['import_tariff']]
+            loads = obs[self.idx['loads']]
+            solar = obs[self.idx['solar']]
+
+
         # Update Battery and calculate reward
         if self.discrete:
             self.updated_action = (action - self.action_intervals) / self.action_intervals
             self.net, self.e_flux = self._apply_action(
                 self.updated_action,
-                obs[self.idx['loads']] + obs[self.idx['solar']]
+                loads + solar
             )
         else:  # Continuous action space
             raise NotImplementedError
             
         self.reward = self._calculate_reward(self.net,
-                                     obs[self.idx['export_tariff']],
-                                     obs[self.idx['import_tariff']])
+                                     export_tariff,
+                                     import_tariff)
 
         self.cumulative_reward += self.reward
         
         ### StatusQuo Operation:
         if self.benchmarks:
             # Get max discharge/charge limits
-            sq_max_d, sq_max_c = self.sq_battery.get_limits(obs[self.idx['solar']],
-                                                            obs[self.idx['loads']])
+            sq_max_d, sq_max_c = self.sq_battery.get_limits(solar,
+                                                            loads)
 
             self.sq_net, self.sq_eflux, self.sq_updated_action = self._apply_sq_action(
-                obs[self.idx['loads']]+obs[self.idx['solar']],
+                loads+solar,
                 sq_max_d,
                 sq_max_c
             )
 
-            self.calc_benchmark_rewards(obs[self.idx['loads']],
-                            obs[self.idx['solar']],
-                            obs[self.idx['export_tariff']],
-                            obs[self.idx['import_tariff']])
+            self.calc_benchmark_rewards(loads,
+                            solar,
+                            export_tariff,
+                            import_tariff)
 
         # Calculate whether terminated
         done = self._current_tick == self._end_tick
@@ -227,28 +239,40 @@ class HomerEnv(gym.Env):
         """
         self.action = self.action_intervals # First step 'was' always standby
         self.updated_action = 0
+
+        if self.complex:
+                    export_tariff = obs[self.idx['rrp_x']]
+                    import_tariff = obs[self.idx['rrp_x']] * -1
+                    loads =  obs[self.idx['Home Consumption']]
+                    solar = obs[self.idx['Solar Consumption']]
+        else:
+            export_tariff = obs[self.idx['export_tariff']]
+            import_tariff = obs[self.idx['import_tariff']]
+            loads = obs[self.idx['loads']]
+            solar = obs[self.idx['solar']]
+
         # Calculate net
         self.net, self.e_flux = self._apply_action(
             self.action,
-            obs[self.idx['loads']] + obs[self.idx['solar']]
+            loads + solar
         )
         
         # Calculate Reward
         self.reward = self._calculate_reward(self.net,
-                                             obs[self.idx['export_tariff']],
-                                             obs[self.idx['import_tariff']])
+                                             export_tariff,
+                                             import_tariff)
         self.cumulative_reward += self.reward
 
         ### Benchmark Operation:
         if self.benchmarks:
-            self.sq_net = obs[self.idx['loads']] + obs[self.idx['solar']]
+            self.sq_net = laods + solar
             self.sq_updated_action = 0  # do nothing
             self.sq_eflux=0
             
-            self.calc_benchmark_rewards(obs[self.idx['loads']],
-                                        obs[self.idx['solar']],
-                                        obs[self.idx['export_tariff']],
-                                        obs[self.idx['import_tariff']])
+            self.calc_benchmark_rewards(loads,
+                                        solar,
+                                        export_tariff,
+                                        import_tariff)
 
     def _get_obs(self) -> np.ndarray:
         """
@@ -256,11 +280,18 @@ class HomerEnv(gym.Env):
         """
         # Get observation indexes.
         c = self._current_tick
-        s = self.idx['solar']
-        l = self.idx['loads']
-        mc = self.idx['max_c']
-        md = self.idx['max_d']
-        sc = self.idx['soc']
+        if self.complex:
+            s = self.idx['Solar Consumption']
+            l = self.idx['Home Consumption']
+            mc = self.idx['max_c']
+            md = self.idx['max_d']
+            sc = self.idx['soc']
+        else:
+            s = self.idx['solar']
+            l = self.idx['loads']
+            mc = self.idx['max_c']
+            md = self.idx['max_d']
+            sc = self.idx['soc']
         # get limits
         solar = self.data_arr[c:c + 1, s:s + 1]
         loads = self.data_arr[c:c + 1, l:l + 1]
@@ -472,7 +503,9 @@ class HomerEnv(gym.Env):
             self.df_index = self.df[remove_list].reset_index()
             self.df = self.df[c_list]
         self.idx = {k: v for v, k in enumerate(self.df.columns)}
+        print(f'idx: {self.idx}')
         self.data_arr = self.df[c_list].to_numpy(dtype=np.float32)
+        print(f'data arr: {self.data_arr}')
 
     def seed(self, seed) -> None:
         np.random.seed(seed)
@@ -497,3 +530,10 @@ class HomerEnv(gym.Env):
         self.no_solar_cumulative_reward += self.no_solar_reward
         self.no_battery_cumulative_reward += self.no_battery_reward
         self.sq_cumulative_reward += self.sq_reward
+
+
+
+
+
+
+
