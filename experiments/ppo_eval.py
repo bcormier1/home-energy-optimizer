@@ -57,56 +57,77 @@ def main(args):
     log_name = os.path.join(config.task, config.algo_name, now)
     log_path = os.path.join(config.log_path, log_name) 
     
-    # Set up directoriesfor logging
-    exists = os.path.exists(log_path)
-    if not exists:
-        os.makedirs(log_path)
-        print(f"New directory was created at '{log_path}'")
-    print(f"Logging to '{log_path}'")
-    setattr(config, "result_path", log_path)
+    # Set up directories for logging
+    if config.do_only_eval == False:
+        exists = os.path.exists(log_path)
+        if not exists:
+            os.makedirs(log_path)
+            print(f"New directory was created at '{log_path}'")
+        print(f"Logging to '{log_path}'")
+        setattr(config, "result_path", log_path)
     
-    # Initialise the wandb logger
-    logger = WandbLogger(
-        save_interval=1,
-        project="homer_dev", 
-        entity="w266_wra",
-        train_interval=1,
-        update_interval=1,
-        config=settings
-        )
-    writer = SummaryWriter(config.log_path)
-    writer.add_text("args", str(config))
-    logger.load(writer)
+        # Initialise the wandb logger
+        logger = WandbLogger(
+            save_interval=1,
+            project="RL_project",
+            entity="w266_wra",
+            train_interval=1,
+            update_interval=1,
+            config=settings
+            )
+        writer = SummaryWriter(config.log_path)
+        writer.add_text("args", str(config))
+        logger.load(writer)
+        
+        if args.sweep:
+            print('Running sweep!')
+            # Hacky wandb sweep integration. 
+            wandb_config = logger.wandb_run.config
+            for item in wandb_config.items():
+                wandb_key = item[0]
+                wandb_val = item[1]
+                if wandb_key in settings.keys():
+                    settings[wandb_key] = wandb_val
+                else:
+                    settings.update({wandb_key: wandb_val})
+                print(f"Sweep Argument Check: {wandb_key}: {settings[wandb_key]}")
+            # Update config. 
+            for k, v in settings.items():
+                setattr(config, k, v)
     
-    if args.sweep:
-        print('Running sweep!')
-        # Hacky wandb sweep integration. 
-        wandb_config = logger.wandb_run.config
-        for item in wandb_config.items():
-            wandb_key = item[0]
-            wandb_val = item[1]
-            if wandb_key in settings.keys():
-                settings[wandb_key] = wandb_val
-            else:
-                settings.update({wandb_key: wandb_val})
-            print(f"Sweep Argument Check: {wandb_key}: {settings[wandb_key]}")
-        # Update config. 
-        for k,v in settings.items():
-            setattr(config, k, v)
+        policy = None
+        test_collector = None
     
-    policy = None
-    test_collector = None
-    
-    if config.do_train:
-        print('Running Taining')
+    else:
+        print(f"Skipping logging and sweeps since only doing eval...")
+
+        policy_file = os.path.join(config.log_path, config.task, config.algo_name, config.policy_time_to_eval,
+                                   config.policy_to_eval)
+        eval_log_name = os.path.join(config.task, config.algo_name, config.policy_time_to_eval)
+        eval_log_path = os.path.join(config.log_path, eval_log_name)
+        setattr(config, "result_path", eval_log_path)
+        exists = os.path.exists(policy_file)
+        if exists:
+            print(f"Doing Eval on policy {policy_file}")
+            load_and_eval_policy(config, policy_file)
+        else:
+            print(f"Cannot find policy to run in do_only_eval...")
+            return
+
+        print('Test Run completed')
+
+    if config.do_train and config.do_only_eval == False:
+        print('Running Training')
         policy, test_collector = train_agent(config, logger, log_path)
 
     # Close wandb logging
-    logger.wandb_run.finish()
+    if config.do_only_eval == False:
+        logger.wandb_run.finish()
 
-    if config.do_eval:
+    if config.do_eval and config.do_only_eval == False:
         # Do eval
         if policy is None or test_collector is None:
+            # Load policy and test_collector
             print('No Policy or Collector loaded! Skipping evaluation')
         else:
             print('Running evaluation')
@@ -121,6 +142,156 @@ def load_settings(file):
     with open(file, 'r') as f:
         settings = json.load(f)
     return settings
+
+
+def load_and_eval_policy(config, file):
+    device = args.device
+    # Create test envs
+    setattr(config, 'episode_length', 0)
+    setattr(config, 'start_soc', 'full')
+    test_envs, device_list = load_homer_env(config, 'test')
+    print("Loaded test environments")
+    
+    # ### Get example dims
+    env, _ = load_homer_env(config, 'train', True) 
+    if config.parameterised_mlp:
+        print(f"Loading parameterised network with {config.n_hidden_layers}"
+              f" hidden layers, each with {config.hidden_layer_dims} neurons")
+        hidden_sizes = [
+            config.hidden_layer_dims for dim in range(config.n_hidden_layers)
+        ]
+    else:
+        print(f"Loading network with dimension{config.hidden_sizes}")
+        hidden_sizes = config.hidden_sizes
+    
+    obs_shape = env.observation_space.shape or env.observation_space.n
+    action_shape = env.action_space.shape or env.action_space.n
+
+    # Define NN parameters
+    def noisy_linear(x, y):
+        return NoisyLinear(x, y, config.noisy_std)
+
+    net = Net(
+        obs_shape,
+        action_shape,
+        hidden_sizes=hidden_sizes, 
+        device=device
+    )
+    
+    print(f"Environment Action space: {env.action_space}")
+    print(f"Environment Action shape: {action_shape}")
+    print(f"Environment Observation shape: {env.observation_space.shape}")
+    
+    if torch.cuda.is_available() and config.data_parallel:
+        actor = DataParallelNet(
+            Actor(net, action_shape, device=None).to(device)
+        )
+        critic = DataParallelNet(Critic(net, device=None).to(device))
+    else:
+        actor = Actor(net, action_shape, device=device).to(device)
+        critic = Critic(net, device=device).to(device)
+    
+    actor_critic = ActorCritic(actor, critic)
+    
+    # orthogonal initialization required for PPO 
+    for m in actor_critic.modules():
+        if isinstance(m, torch.nn.Linear):
+            torch.nn.init.orthogonal_(m.weight)
+            torch.nn.init.zeros_(m.bias)
+
+    lr_optimizer = config.lr_optimizer
+    optim = torch.optim.Adam(net.parameters(), lr=lr_optimizer)
+    lr_scheduler = None
+
+    # Since environment action space is discrete 
+    def dist(p):
+        return torch.distributions.Categorical(logits=p)
+
+    policy = PPOPolicy(
+        actor, 
+        critic, 
+        optim, 
+        dist,
+        discount_factor=config.gamma,
+        eps_clip=config.eps_clip,
+        dual_clip=config.dual_clip,
+        value_clip=config.value_clip,
+        advantage_normalization=config.norm_adv,
+        recompute_advantage=config.recompute_adv,
+        vf_coef=config.vf_coef,
+        ent_coef=config.ent_coef,
+        max_grad_norm=config.max_grad_norm,
+        gae_lambda=config.gae_lambda,
+        reward_normalization=config.rew_norm,
+        max_batchsize = config.max_batchsize_policy,
+        action_scaling=config.action_scaling,
+        action_bound_method='clip',
+        action_space=env.action_space,
+        lr_scheduler=lr_scheduler,  
+        deterministic_eval=False
+    ).to(device)
+    
+
+    if config.policy_to_eval == "best_policy.pth":
+        policy.load_state_dict(torch.load(file, map_location=args.device))
+    else:
+        checkpoint = torch.load(file)
+        policy.load_state_dict(checkpoint['model'])
+        #optim.load_state_dict(checkpoint['optim'])
+    print(f"Loaded policy from {file}\nLoading Collector")
+
+    test_collector = Collector(
+        policy,
+        test_envs,
+        exploration_noise=True
+    )
+
+    df_list = []
+    for repeat in range(config.eval_n_repeats):
+        # Load test collector with new test envs.
+        print('running eval!')
+        policy.eval()
+        result = test_collector.collect(
+            n_episode=test_collector.env_num,
+            render=False
+        )
+        print(
+            f"Repeat: {repeat} "
+            f"Final reward: {result['rews'].mean():.4f},"
+            f" length: {result['lens'].mean():.4f}\n"
+            f"{result}"
+        )
+
+        # Build dict:
+        if config.save_test_data:
+            result_dict = {
+                "repeat": np.ones(result["n/ep"]) * repeat,
+                "deviceid": np.array(device_list)[result['idxs']],
+                "steps": result["lens"],
+                "reward": result["rews"]
+            }
+            df_list.append(pd.DataFrame(result_dict))
+
+    # Build dict:
+    if config.save_test_data:
+        result_dict = {
+            "repeat": np.ones(result["n/ep"]) * repeat,
+            "deviceid": np.array(device_list)[result['idxs']],
+            "steps": result["lens"],
+            "reward": result["rews"]
+        }
+        df_list.append(pd.DataFrame(result_dict))
+
+    summary_dict = pd.concat(df_list)
+
+    eval_log_name = os.path.join(config.task, config.algo_name, config.policy_time_to_eval)
+    eval_log_path = os.path.join(config.log_path, eval_log_name)
+    pth = eval_log_path + "/" + config.policy_to_eval[:-4] + "_aggregated_result_summary.csv"
+    print(f"saving to {pth}")
+    summary_dict.to_csv(pth, index=False)
+
+    return
+
 
 def train_agent(config, logger, log_path):
     

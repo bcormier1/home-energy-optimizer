@@ -20,7 +20,7 @@ from data.data_utils import (
 
 import gym
 from gym import spaces, wrappers
-from gym_homer.envs.homer_env_dev import HomerEnv
+from gym_homer.envs.homer_env import HomerEnv
 
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
@@ -133,7 +133,6 @@ def main(args):
         print('!! Skipping evaluation loop !!')
 
     print('Run completed successfully')
-
 
 def load_settings(file):
     print(file)

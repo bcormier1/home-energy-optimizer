@@ -1,5 +1,6 @@
 import pandas as pd
 import os
+import numpy as np
 
 class DataLoader():
     """
@@ -28,7 +29,7 @@ class DataLoader():
         if config.pricing_env == 'dummy':
             return self.load_dummy_data()
             
-        elif config.pricing_env == 'simple' or config.pricing_env == 'debug':   
+        elif config.pricing_env in ['debug','simple','complex']:   
             self.device_list = self.load_device_list(self)
             if (config.max_devices <= len(self.device_list) and 
                 config.max_devices > 0):
@@ -37,10 +38,6 @@ class DataLoader():
                 print('Invalid input, defaulting to number of found devices')
                 self.n_devices = len(self.device_list)
             print(f"Found {self.n_devices} devices")
-        
-        elif config.pricing_env == 'complex':
-            print("Complex Environment not implemented yet.")
-            raise NotImplementedError
 
     def load_device_list(self, config):
         if self.dataset_type == 'debug':

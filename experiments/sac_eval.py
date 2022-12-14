@@ -33,9 +33,9 @@ from tianshou.data import (
     PrioritizedVectorReplayBuffer
 )
 from tianshou.env import SubprocVectorEnv
-from tianshou.policy import PPOPolicy, ICMPolicy
-from tianshou.trainer import onpolicy_trainer
-from tianshou.utils.net.common import ActorCritic, DataParallelNet, Net
+from tianshou.policy import DiscreteSACPolicy, ICMPolicy
+from tianshou.trainer import offpolicy_trainer
+from tianshou.utils.net.common import Net
 from tianshou.utils.net.discrete import (
     Actor, 
     Critic, 
@@ -57,70 +57,263 @@ def main(args):
     log_name = os.path.join(config.task, config.algo_name, now)
     log_path = os.path.join(config.log_path, log_name) 
     
-    # Set up directoriesfor logging
-    exists = os.path.exists(log_path)
-    if not exists:
-        os.makedirs(log_path)
-        print(f"New directory was created at '{log_path}'")
-    print(f"Logging to '{log_path}'")
-    setattr(config, "result_path", log_path)
-    
-    # Initialise the wandb logger
-    logger = WandbLogger(
-        save_interval=1,
-        project="homer_dev", 
-        entity="w266_wra",
-        train_interval=1,
-        update_interval=1,
-        config=settings
-        )
-    writer = SummaryWriter(config.log_path)
-    writer.add_text("args", str(config))
-    logger.load(writer)
-    
-    if args.sweep:
-        print('Running sweep!')
-        # Hacky wandb sweep integration. 
-        wandb_config = logger.wandb_run.config
-        for item in wandb_config.items():
-            wandb_key = item[0]
-            wandb_val = item[1]
-            if wandb_key in settings.keys():
-                settings[wandb_key] = wandb_val
-            else:
-                settings.update({wandb_key: wandb_val})
-            print(f"Sweep Argument Check: {wandb_key}: {settings[wandb_key]}")
-        # Update config. 
-        for k,v in settings.items():
-            setattr(config, k, v)
-    
-    policy = None
-    test_collector = None
-    
-    if config.do_train:
-        print('Running Taining')
+    # Set up directories for logging
+    if config.do_only_eval == False:
+        exists = os.path.exists(log_path)
+        if not exists:
+            os.makedirs(log_path)
+            print(f"New directory was created at '{log_path}'")
+        print(f"Logging to '{log_path}'")
+        setattr(config, "result_path", log_path)
+        
+        # Initialise the wandb logger
+        logger = WandbLogger(
+            save_interval=1,
+            project="RL_project", 
+            entity="w266_wra",
+            train_interval=1,
+            update_interval=1,
+            config=settings
+            )
+        writer = SummaryWriter(config.log_path)
+        writer.add_text("args", str(config))
+        logger.load(writer)
+        
+        if args.sweep:
+            print('Running sweep!')
+            # Hacky wandb sweep integration. 
+            wandb_config = logger.wandb_run.config
+            for item in wandb_config.items():
+                wandb_key = item[0]
+                wandb_val = item[1]
+                if wandb_key in settings.keys():
+                    settings[wandb_key] = wandb_val
+                else:
+                    settings.update({wandb_key: wandb_val})
+                print(f"Sweep Argument Check: {wandb_key}: {settings[wandb_key]}")
+            # Update config. 
+            for k,v in settings.items():
+                setattr(config, k, v)
+        
+        policy = None
+        test_collector = None
+        
+    else:
+        print(f"Skipping logging and sweeps since only doing eval...")
+
+        policy_file = os.path.join(config.log_path, config.task, config.algo_name, config.policy_time_to_eval,
+                                   config.policy_to_eval)
+        eval_log_name = os.path.join(config.task, config.algo_name, config.policy_time_to_eval)
+        eval_log_path = os.path.join(config.log_path, eval_log_name)
+        setattr(config, "result_path", eval_log_path)
+        exists = os.path.exists(policy_file)
+        print(eval_log_path)
+        if exists:
+            print(f"Doing Eval on policy {policy_file}")
+            load_and_eval_policy(config, policy_file)
+        else:
+            print(f"Cannot find policy to run in do_only_eval...")
+            return
+
+        print('Test Run completed')
+
+    if config.do_train and config.do_only_eval == False:
+        print('Running Training')
         policy, test_collector = train_agent(config, logger, log_path)
 
     # Close wandb logging
-    logger.wandb_run.finish()
+    if config.do_only_eval == False:
+        logger.wandb_run.finish()
 
-    if config.do_eval:
-        # Do eval
-        if policy is None or test_collector is None:
-            print('No Policy or Collector loaded! Skipping evaluation')
+        if config.do_eval:
+            # Do eval
+            if policy is None or test_collector is None:
+                print('No Policy or Collector loaded! Skipping evaluation')
+            else:
+                print('Running evaluation')
+                do_eval(config, policy, test_collector)
         else:
-            print('Running evaluation')
-            do_eval(config, policy, test_collector)
-    else:
-        print('!! Skipping evaluation loop !!')
+            print('!! Skipping evaluation loop !!')
 
-    print('Run completed successfully')
+        print('Run completed successfully')
     
 def load_settings(file):
     print(file)
     with open(file, 'r') as f:
         settings = json.load(f)
     return settings
+
+
+def load_and_eval_policy(config, file):
+    device = args.device
+    # Create test envs
+    setattr(config, 'episode_length', 0)
+    setattr(config, 'start_soc', 'full')
+    test_envs, device_list = load_homer_env(config, 'test')
+    print("Loaded test environments")
+    
+    # ### Get example dims
+    env, _ = load_homer_env(config, 'train', True) 
+    if config.parameterised_mlp:
+        print(f"Loading parameterised network with {config.n_hidden_layers}"
+              f" hidden layers, each with {config.hidden_layer_dims} neurons")
+        hidden_sizes = [
+            config.hidden_layer_dims for dim in range(config.n_hidden_layers)
+        ]
+    else:
+        print(f"Loading network with dimension{config.hidden_sizes}")
+        hidden_sizes = config.hidden_sizes
+    
+    obs_shape = env.observation_space.shape or env.observation_space.n
+    action_shape = env.action_space.shape or env.action_space.n
+
+      # Network
+    net = Net(
+        obs_shape,
+        action_shape,
+        hidden_sizes=hidden_sizes, 
+        device=device
+    )
+    
+    # Actor
+    actor = Actor(
+        net, 
+        action_shape, 
+        softmax_output=False, 
+        device=device,
+    ).to(device)
+    actor_optim = torch.optim.Adam(actor.parameters(), lr=config.actor_lr)
+    
+    # Critics
+    net_c1 = Net(
+        obs_shape, 
+        hidden_sizes=hidden_sizes,
+        device=device)
+    critic1 = Critic(
+        net_c1, 
+        last_size=action_shape, 
+        device=device
+    ).to(device)
+    critic1_optim = torch.optim.Adam(critic1.parameters(), lr=config.critic_lr)
+    
+    net_c2 = Net(
+        obs_shape, 
+        hidden_sizes=hidden_sizes, 
+        device=device)
+    critic2 = Critic(
+        net_c2, 
+        last_size=action_shape,
+        device=args.device
+    ).to(device)
+    critic2_optim = torch.optim.Adam(critic2.parameters(), lr=config.critic_lr)
+
+    # optimizer of the actor and the critic
+    lr_optimizer = config.lr_optimizer
+    optim = torch.optim.Adam(net.parameters(), lr=lr_optimizer)
+    
+    policy = DiscreteSACPolicy(
+        actor,
+        actor_optim,
+        critic1,
+        critic1_optim,
+        critic2,
+        critic2_optim,
+        config.tau,
+        config.gamma,
+        config.alpha,
+        estimation_step=config.n_est_steps,
+        reward_normalization=config.rew_norm
+    ).to(device)
+    
+    if config.icm: # Use the intrinsic Curiosity module 
+        feature_net = Net(
+            obs_shape,
+            action_shape,
+            hidden_sizes=hidden_sizes, 
+            device=device
+        )
+        output_dim = int(np.prod(action_shape)) * 1 
+        feature_net.net = nn.Sequential(
+                feature_net.model, 
+                nn.Linear(output_dim, output_dim),
+                nn.ReLU(inplace=True)
+            )
+        action_dim = np.prod(action_shape)
+        feature_dim = output_dim
+        icm_net = IntrinsicCuriosityModule(
+            feature_net.net,
+            feature_dim,
+            action_dim,
+            hidden_sizes=hidden_sizes,
+            device=device,
+        )
+        icm_optim = torch.optim.Adam(icm_net.parameters(), lr=config.actor_lr)
+        policy = ICMPolicy(
+            policy, 
+            icm_net, 
+            icm_optim,  
+            config.icm_lr_scale, 
+            config.icm_reward_scale,
+            config.icm_fwd_loss
+        ).to(device)
+
+    test_collector = Collector(
+        policy, 
+        test_envs,
+        exploration_noise=True
+    )
+    
+    print(f"Running train_collector, filling replay buffer")
+    collector_output = test_collector.collect(
+        n_step=config.batch_size * config.training_num
+    )
+
+    df_list = []
+    for repeat in range(config.eval_n_repeats):
+        # Load test collector with new test envs.
+        print('running eval!')
+        policy.eval()
+        result = test_collector.collect(
+            n_episode=test_collector.env_num,
+            render=False
+        )
+        print(
+            f"Repeat: {repeat} "
+            f"Final reward: {result['rews'].mean():.4f},"
+            f" length: {result['lens'].mean():.4f}\n"
+            f"{result}"
+        )
+
+        # Build dict:
+        if config.save_test_data:
+            result_dict = {
+                "repeat": np.ones(result["n/ep"]) * repeat,
+                "deviceid": np.array(device_list)[result['idxs']],
+                "steps": result["lens"],
+                "reward": result["rews"]
+            }
+            df_list.append(pd.DataFrame(result_dict))
+
+    # Build dict:
+    if config.save_test_data:
+        result_dict = {
+            "repeat": np.ones(result["n/ep"]) * repeat,
+            "deviceid": np.array(device_list)[result['idxs']],
+            "steps": result["lens"],
+            "reward": result["rews"]
+        }
+        df_list.append(pd.DataFrame(result_dict))
+
+    summary_dict = pd.concat(df_list)
+
+    eval_log_name = os.path.join(config.task, config.algo_name, config.policy_time_to_eval)
+    eval_log_path = os.path.join(config.log_path, eval_log_name)
+    pth = eval_log_path + "/" + config.policy_to_eval[:-4] + "_aggregated_result_summary.csv"
+    print(f"saving to {pth}")
+    summary_dict.to_csv(pth, index=False)
+
+    return
+
 
 def train_agent(config, logger, log_path):
     
@@ -135,7 +328,7 @@ def train_agent(config, logger, log_path):
     print("Loaded train Enironments")
     test_envs, _ = load_homer_env(config, 'validation')
     print("Loaded validation environments")
-    
+
     # Seed
     np.random.seed(config.seed)
     torch.manual_seed(config.seed)
@@ -157,6 +350,7 @@ def train_agent(config, logger, log_path):
     obs_shape = env.observation_space.shape or env.observation_space.n
     action_shape = env.action_space.shape or env.action_space.n
     
+    # Network
     net = Net(
         obs_shape,
         action_shape,
@@ -164,75 +358,73 @@ def train_agent(config, logger, log_path):
         device=device
     )
     
+    # Actor
+    actor = Actor(
+        net, 
+        action_shape, 
+        softmax_output=False, 
+        device=device,
+    ).to(device)
+    actor_optim = torch.optim.Adam(actor.parameters(), lr=config.actor_lr)
+    
+    # Critics
+    net_c1 = Net(
+        obs_shape, 
+        hidden_sizes=hidden_sizes,
+        device=device)
+    critic1 = Critic(
+        net_c1, 
+        last_size=action_shape, 
+        device=device
+    ).to(device)
+    critic1_optim = torch.optim.Adam(critic1.parameters(), lr=config.critic_lr)
+    
+    net_c2 = Net(
+        obs_shape, 
+        hidden_sizes=hidden_sizes, 
+        device=device)
+    critic2 = Critic(
+        net_c2, 
+        last_size=action_shape,
+        device=args.device
+    ).to(device)
+    critic2_optim = torch.optim.Adam(critic2.parameters(), lr=config.critic_lr)
+    
+    if config.auto_alpha:
+        target_entropy = 0.98 * np.log(np.prod(args.action_shape))
+        log_alpha = torch.zeros(1, requires_grad=True, device=device)
+        alpha_optim = torch.optim.Adam([log_alpha], lr=config.alpha_lr)
+        setattr(config, "alpha", (target_entropy, log_alpha, alpha_optim))
+    
     print(f"Environment Action space: {env.action_space}")
     print(f"Environment Action shape: {action_shape}")
     print(f"Environment Observation shape: {env.observation_space.shape}")
     
-    if torch.cuda.is_available() and config.data_parallel:
-        actor = DataParallelNet(
-            Actor(net, action_shape, device=None).to(device)
-        )
-        critic = DataParallelNet(Critic(net, device=None).to(device))
-    else:
-        actor = Actor(net, action_shape, device=device).to(device)
-        critic = Critic(net, device=device).to(device)
-    
-    actor_critic = ActorCritic(actor, critic)
-    
-    # orthogonal initialization required for PPO 
-    for m in actor_critic.modules():
-        if isinstance(m, torch.nn.Linear):
-            torch.nn.init.orthogonal_(m.weight)
-            torch.nn.init.zeros_(m.bias)
-    
     # optimizer of the actor and the critic
     lr_optimizer = config.lr_optimizer
-    optim = torch.optim.Adam(actor_critic.parameters(), lr=lr_optimizer)
+    optim = torch.optim.Adam(net.parameters(), lr=lr_optimizer)
     
-    lr_scheduler = None
-    if config.lr_decay:
-        # decay learning rate to 0 linearly
-        max_update_num = np.ceil(
-            config.steps_per_epoch / config.episode_length#config.steps_per_collect
-            ) * config.n_max_epochs
-        lr_scheduler = LambdaLR(
-            optim, lr_lambda=lambda epoch: 1 - epoch / max_update_num
-        )
-
-    # Since environment action space is discrete 
-    def dist(p):
-        return torch.distributions.Categorical(logits=p)
-    
-    policy = PPOPolicy(
-        actor, 
-        critic, 
-        optim, 
-        dist,
-        discount_factor=config.gamma,
-        eps_clip=config.eps_clip,
-        dual_clip=config.dual_clip,
-        value_clip=config.value_clip,
-        advantage_normalization=config.norm_adv,
-        recompute_advantage=config.recompute_adv,
-        vf_coef=config.vf_coef,
-        ent_coef=config.ent_coef,
-        max_grad_norm=config.max_grad_norm,
-        gae_lambda=config.gae_lambda,
-        reward_normalization=config.rew_norm,
-        max_batchsize = config.max_batchsize_policy,
-        action_scaling=config.action_scaling,
-        action_bound_method='clip',
-        action_space=env.action_space,
-        lr_scheduler=lr_scheduler,  
-        deterministic_eval=False
+    policy = DiscreteSACPolicy(
+        actor,
+        actor_optim,
+        critic1,
+        critic1_optim,
+        critic2,
+        critic2_optim,
+        config.tau,
+        config.gamma,
+        config.alpha,
+        estimation_step=config.n_est_steps,
+        reward_normalization=config.rew_norm
     ).to(device)
     
-    if config.icm: # Use the intrinsic Curiosity module
-        print("Loading Intrinsic Curiousity Module")
-        feature_net = Net(obs_shape,
-                          action_shape,
-                          hidden_sizes=hidden_sizes, 
-                          device=device)
+    if config.icm: # Use the intrinsic Curiosity module 
+        feature_net = Net(
+            obs_shape,
+            action_shape,
+            hidden_sizes=hidden_sizes, 
+            device=device
+        )
         output_dim = int(np.prod(action_shape)) * 1 
         feature_net.net = nn.Sequential(
                 feature_net.model, 
@@ -248,7 +440,7 @@ def train_agent(config, logger, log_path):
             hidden_sizes=hidden_sizes,
             device=device,
         )
-        icm_optim = torch.optim.Adam(icm_net.parameters(), lr=lr_optimizer)
+        icm_optim = torch.optim.Adam(icm_net.parameters(), lr=config.actor_lr)
         policy = ICMPolicy(
             policy, 
             icm_net, 
@@ -274,21 +466,25 @@ def train_agent(config, logger, log_path):
             buffer_num=len(train_envs),
             alpha=config.alpha,
             beta=config.beta,
-        )
+            stack_num=config.frames_stack
+    )
     else:
         buffer = VectorReplayBuffer(
-            total_size=config.replay_buffer_collector,
-            buffer_num=len(train_envs)
+            config.replay_buffer_collector,
+            buffer_num=len(train_envs),
+            stack_num=config.frames_stack
         )
     print(f'Buffer Loaded with length {len(buffer)}')    
     train_collector = Collector(
         policy, 
         train_envs, 
-        buffer
+        buffer, 
+        exploration_noise=True
     )
     test_collector = Collector(
         policy, 
-        test_envs
+        test_envs,
+        exploration_noise=True
     )
     
     print(f"Running train_collector, filling replay buffer")
@@ -315,23 +511,19 @@ def train_agent(config, logger, log_path):
 
     def save_checkpoint_fn(epoch, env_step, gradient_step):
         ckpt_path = os.path.join(log_path, f"checkpoint_{epoch}.pth")
-        torch.save({"model": policy.state_dict(), "optim": optim.state_dict()}, 
-                    ckpt_path)
+        torch.save(
+            {
+                "model": policy.state_dict(), 
+                "optim": optim.state_dict()
+            }, ckpt_path
+        )
         print(f"Checkpoint saved to {ckpt_path}")
+    
         return ckpt_path
     
-    b1 = config.steps_per_collect == None
-    b2 = config.episode_per_collect == None
-    if b1 != b2:
-        pass
-    else:
-        raise Exception (
-            "Both steps_per_collect or episode_per_collect may not be set, set one to 'null'. "
-        )
-
     print("Running training")
     # see https://tianshou.readthedocs.io/en/master/api/tianshou.trainer.html
-    result = onpolicy_trainer(
+    result = offpolicy_trainer(
         policy,
         train_collector,
         test_collector,
@@ -340,12 +532,12 @@ def train_agent(config, logger, log_path):
         repeat_per_collect=config.repeat_per_collector,
         episode_per_test=config.test_num,
         batch_size=config.batch_size,
-        step_per_collect= config.steps_per_collect,
-        episode_per_collect=config.episode_per_collect,
         stop_fn=lambda mean_reward: mean_reward >= config.reward_stop,
-        logger=logger,
-        verbose=True,
         save_best_fn=save_best_fn,
+        logger=logger,
+        step_per_collect= config.steps_per_collect,
+        update_per_step= 0.01,# 1 / config.steps_per_collect,
+        test_in_train=True,
         resume_from_log=config.resume_id is not None,
         save_checkpoint_fn=save_checkpoint_fn,
     )
@@ -356,6 +548,8 @@ def train_agent(config, logger, log_path):
 def do_eval(config, policy, test_collector):
     
     # Create test envs
+    setattr(config, 'episode_length', 0)
+    setattr(config, 'start_soc', 'full')
     test_envs, device_list = load_homer_env(config, 'test')
     print("Loaded test environments")
     
@@ -369,11 +563,13 @@ def do_eval(config, policy, test_collector):
     df_list = []
     for repeat in range(config.eval_n_repeats):
         # Load test collector with new test envs. 
+        policy.load_state_dict(torch.load(f'{config.result_path}'+'/best_policy.pth'))
         test_collector = Collector(
             policy, 
             test_envs,
-            exploration_noise=True
+            exploration_noise=False
         )
+        policy.load_state_dict(torch.load(f'{config.result_path}'+'/best_policy.pth'))
         policy.eval()
         result = test_collector.collect(
             n_episode=test_collector.env_num, 

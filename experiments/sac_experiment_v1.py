@@ -20,7 +20,7 @@ from data.data_utils import (
 
 import gym
 from gym import spaces, wrappers
-from gym_homer.envs.homer_env_dev import HomerEnv
+from gym_homer.envs.homer_env import HomerEnv
 
 from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
@@ -296,7 +296,7 @@ def train_agent(config, logger, log_path):
     
     print(f"Running train_collector, filling replay buffer")
     collector_output = train_collector.collect(
-        n_step=config.batch_size * config.training_num
+        n_step=config.steps_per_collect * config.training_num
     )
     print(f'{len(train_envs)} vectorised buffers loaded, each '
           f'with {len(buffer)} steps\nSampled action summary:\n')    
@@ -343,7 +343,7 @@ def train_agent(config, logger, log_path):
         save_best_fn=save_best_fn,
         logger=logger,
         step_per_collect= config.steps_per_collect,
-        update_per_step= 0.01,# 1 / config.steps_per_collect,
+        update_per_step= 1 / config.steps_per_collect * 10,
         test_in_train=True,
         resume_from_log=config.resume_id is not None,
         save_checkpoint_fn=save_checkpoint_fn,
@@ -437,7 +437,7 @@ def load_homer_env(config, data_subset, example=False):
                 for i in range(config.n_dummy_envs)]
             )
     
-    elif config.pricing_env == 'debug' or 'simple':
+    elif config.pricing_env in ['debug','simple','complex']:
         device_list = file_loader.device_list
         if example:
             # Load a single example to get env dimensions.
@@ -473,9 +473,6 @@ def load_homer_env(config, data_subset, example=False):
             ]            
             envs = SubprocVectorEnv(env_list)
             print(f"Sucessfully loaded {n_devices} environments")
-    
-    elif config.pricing_env == 'complex':
-        raise NotImplementedError    
     else:
         print(f"Invalid value for pricing_env: {config.pricing_env}")
         raise Exception

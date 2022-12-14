@@ -9,7 +9,7 @@
     "do_train": true,
     "do_eval":false, 
     "discrete_env": true,
-    "exportable": true,
+    "exportable": false,
     "importable":true,
     "n_dummy_envs": 150,
     "max_devices":150,

@@ -64,5 +64,8 @@
     "n_days_test":-1,
     "val_offset":10,
     "eval_n_repeats":1,
-    "save_test_data":true
+    "save_test_data":true,
+    "do_only_eval":true,
+    "policy_time_to_eval": "221204-183143",
+    "policy_to_eval": "checkpoint_14.pth"
 }

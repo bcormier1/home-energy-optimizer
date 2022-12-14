@@ -12,23 +12,16 @@ metric:
   name: train/reward
 parameters:
   action_intervals:
-    values: [1,2, 5, 10]
-  lr_optimizer:
-    distribution: uniform
-    max: 0.0005
-    min: 0.000005
-  replay_buffer_collector:
-    values: [1e4, 1e5, 1e6]
-  eps_clip:
-    distribution: uniform
-    max: 0.3
-    min: 0.1
-  repeat_per_collector:
-    distribution: int_uniform
-    min: 1
-    max: 10
-  deterministic_eval:
+    values: [1,2,3]
+  exportable:
     distribution: categorical
     values:
       - "true"
       - "false"
+  importable:
+    distribution: categorical
+    values:
+      - "true"
+      - "false"
+  episode_length:
+    values: [24,72,144]
