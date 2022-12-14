@@ -27,12 +27,19 @@ from torch.utils.tensorboard import SummaryWriter
 from torch import nn
 
 from tianshou.utils import WandbLogger
-from tianshou.data import Collector, VectorReplayBuffer
+from tianshou.data import (
+    Collector, 
+    VectorReplayBuffer, 
+    PrioritizedVectorReplayBuffer
+)
 from tianshou.env import SubprocVectorEnv
 from tianshou.policy import DiscreteSACPolicy, ICMPolicy
 from tianshou.trainer import offpolicy_trainer
 from tianshou.utils.net.common import Net
-from tianshou.utils.net.discrete import Actor, Critic, IntrinsicCuriosityModule
+from tianshou.utils.net.discrete import (
+    Actor, 
+    Critic, 
+    IntrinsicCuriosityModule)
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -50,7 +57,7 @@ def main(args):
     log_name = os.path.join(config.task, config.algo_name, now)
     log_path = os.path.join(config.log_path, log_name) 
     
-    # Set up directoriesfor logging
+    # Set up directories for logging
     exists = os.path.exists(log_path)
     if not exists:
         os.makedirs(log_path)
@@ -60,11 +67,11 @@ def main(args):
     
     # Initialise the wandb logger
     logger = WandbLogger(
-        save_interval=1000,
-        #run_id=settings.get('run_id',None),
-        #name=settings.get('run_name',None),
+        save_interval=1,
         project="RL_project", 
         entity="w266_wra",
+        train_interval=1,
+        update_interval=1,
         config=settings
         )
     writer = SummaryWriter(config.log_path)
@@ -83,6 +90,9 @@ def main(args):
             else:
                 settings.update({wandb_key: wandb_val})
             print(f"Sweep Argument Check: {wandb_key}: {settings[wandb_key]}")
+        # Update config. 
+        for k,v in settings.items():
+            setattr(config, k, v)
     
     policy = None
     test_collector = None
@@ -160,12 +170,15 @@ def train_agent(config, logger, log_path):
         net, 
         action_shape, 
         softmax_output=False, 
-        device=device
+        device=device,
     ).to(device)
     actor_optim = torch.optim.Adam(actor.parameters(), lr=config.actor_lr)
     
     # Critics
-    net_c1 = Net(obs_shape, hidden_sizes=hidden_sizes, device=device)
+    net_c1 = Net(
+        obs_shape, 
+        hidden_sizes=hidden_sizes,
+        device=device)
     critic1 = Critic(
         net_c1, 
         last_size=action_shape, 
@@ -173,7 +186,10 @@ def train_agent(config, logger, log_path):
     ).to(device)
     critic1_optim = torch.optim.Adam(critic1.parameters(), lr=config.critic_lr)
     
-    net_c2 = Net(obs_shape, hidden_sizes=hidden_sizes, device=device)
+    net_c2 = Net(
+        obs_shape, 
+        hidden_sizes=hidden_sizes, 
+        device=device)
     critic2 = Critic(
         net_c2, 
         last_size=action_shape,
@@ -244,19 +260,28 @@ def train_agent(config, logger, log_path):
     if config.resume_path:
         print(f"Resuming from path {config.resume_path}")
         policy.load_state_dict(
-            torch.load(config.resume_path, map_location=device))
+            torch.load(config.resume_path, map_location=args.device))
         print("Loaded agent from: ", config.resume_path)
     else:
         print("Commencing new run with untrained agent.")
     
     # replay buffer: `save_last_obs` and `stack_num` can be removed together
     # when you have enough RAM
-    buffer = VectorReplayBuffer(
-        config.replay_buffer_collector,
-        buffer_num=len(train_envs),
-        ignore_obs_next=True
+    if config.prioritized_replay_buffer:
+        buffer = PrioritizedVectorReplayBuffer(
+            config.replay_buffer_collector,
+            buffer_num=len(train_envs),
+            alpha=config.alpha,
+            beta=config.beta,
+            stack_num=config.frames_stack
     )
-    print('Buffer Loaded')    
+    else:
+        buffer = VectorReplayBuffer(
+            config.replay_buffer_collector,
+            buffer_num=len(train_envs),
+            stack_num=config.frames_stack
+        )
+    print(f'Buffer Loaded with length {len(buffer)}')    
     train_collector = Collector(
         policy, 
         train_envs, 
@@ -269,11 +294,23 @@ def train_agent(config, logger, log_path):
         exploration_noise=True
     )
     
-    print(f"Testing train_collector, filling replay buffer")
-    train_collector.collect(
-        n_step=config.batch_size * config.training_num
+    print(f"Running train_collector, filling replay buffer")
+    collector_output = train_collector.collect(
+        n_step=config.steps_per_collect * config.training_num
     )
-    print("Done")
+    print(f'{len(train_envs)} vectorised buffers loaded, each '
+          f'with {len(buffer)} steps\nSampled action summary:\n')    
+
+    unique, counts = np.unique(buffer.act, return_counts=True)
+    for i in range(len(unique)):
+        print(f"Action: {unique[i]:.4f}, Counts: {counts[i]}")
+    
+    c_keys=['n/ep', 'n/st', 'rews', 'lens', 'rew', 'len', 'rew_std', 'len_std']
+    print('Collector Stats')
+    for key in c_keys:
+        print(f'{key}: {collector_output[key]}')
+
+    print("\nDone")
     def save_best_fn(policy):
         best_pth = os.path.join(log_path, "best_policy.pth")
         torch.save(policy.state_dict(), best_pth)
@@ -288,8 +325,7 @@ def train_agent(config, logger, log_path):
             }, ckpt_path
         )
         print(f"Checkpoint saved to {ckpt_path}")
-        buffer_path = os.path.join(log_path, f"train_buffer_{epoch}.pkl")
-        pickle.dump(train_collector.buffer, open(buffer_path, "wb"))
+    
         return ckpt_path
     
     print("Running training")
@@ -307,8 +343,8 @@ def train_agent(config, logger, log_path):
         save_best_fn=save_best_fn,
         logger=logger,
         step_per_collect= config.steps_per_collect,
-        update_per_step= 1 / config.steps_per_collect,
-        test_in_train=False,
+        update_per_step= 1 / config.steps_per_collect * 10,
+        test_in_train=True,
         resume_from_log=config.resume_id is not None,
         save_checkpoint_fn=save_checkpoint_fn,
     )
@@ -319,7 +355,9 @@ def train_agent(config, logger, log_path):
 def do_eval(config, policy, test_collector):
     
     # Create test envs
-    test_envs, device_list = load_homer_env(config, 'validation')
+    setattr(config, 'episode_length', 0)
+    setattr(config, 'start_soc', 'full')
+    test_envs, device_list = load_homer_env(config, 'test')
     print("Loaded test environments")
     
     # Load test collector with new test envs. 
@@ -332,11 +370,13 @@ def do_eval(config, policy, test_collector):
     df_list = []
     for repeat in range(config.eval_n_repeats):
         # Load test collector with new test envs. 
+        policy.load_state_dict(torch.load(f'{config.result_path}'+'/best_policy.pth'))
         test_collector = Collector(
             policy, 
             test_envs,
-            exploration_noise=True
+            exploration_noise=False
         )
+        policy.load_state_dict(torch.load(f'{config.result_path}'+'/best_policy.pth'))
         policy.eval()
         result = test_collector.collect(
             n_episode=test_collector.env_num, 
@@ -369,7 +409,6 @@ def load_homer_env(config, data_subset, example=False):
 
     file_loader = DataLoader(config, data_subset)
     
-    # If test, we need to supply the save data
     history = config.save_test_data
     result_path = config.result_path 
 
@@ -397,29 +436,36 @@ def load_homer_env(config, data_subset, example=False):
                     save_path=result_path) 
                 for i in range(config.n_dummy_envs)]
             )
-    elif config.pricing_env == 'simple':
+    
+    elif config.pricing_env in ['debug','simple','complex']:
         device_list = file_loader.device_list
         if example:
             # Load a single example to get env dimensions.
             envs =  HomerEnv(
-                data=file_loader.load_device(device_list[0]), 
+                data=file_loader._load_device(device_list[0]), 
                 start_soc=config.start_soc, 
                 discrete=config.discrete_env,
                 charge_rate=config.charge_rate,
-                action_intervals=config.action_intervals
+                action_intervals=config.action_intervals,
+                episode_length=config.episode_length,
             ) 
         else:
             n_devices = file_loader.n_devices
             env_list = [
                 lambda i=i: HomerEnv(
-                    data=file_loader.load_device(device_list[i], 
-                                                 truncate=config.truncate, 
-                                                 max_days=config.n_days,
-                                                 val_offset=config.val_offset), 
+                    data=file_loader._load_device(device_list[i], 
+                                                 val_offset=config.val_offset,
+                                                 n_days_train=config.n_days_train,
+                                                 n_days_val=config.n_days_val,
+                                                 n_days_test=config.n_days_val), 
                     start_soc=config.start_soc, 
                     discrete=config.discrete_env,
                     charge_rate=config.charge_rate,
                     action_intervals=config.action_intervals,
+                    exportable=config.exportable,
+                    importable=config.importable,
+                    benchmarks=config.benchmarks,
+                    episode_length=config.episode_length,
                     save_history=history,
                     save_path=result_path,
                     device_id=device_list[i]
@@ -427,9 +473,6 @@ def load_homer_env(config, data_subset, example=False):
             ]            
             envs = SubprocVectorEnv(env_list)
             print(f"Sucessfully loaded {n_devices} environments")
-    
-    elif config.pricing_env == 'complex':
-        raise NotImplementedError    
     else:
         print(f"Invalid value for pricing_env: {config.pricing_env}")
         raise Exception

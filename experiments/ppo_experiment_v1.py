@@ -27,7 +27,11 @@ from torch.utils.tensorboard import SummaryWriter
 from torch import nn
 
 from tianshou.utils import WandbLogger
-from tianshou.data import Collector, VectorReplayBuffer
+from tianshou.data import (
+    Collector, 
+    VectorReplayBuffer, 
+    PrioritizedVectorReplayBuffer
+)
 from tianshou.env import SubprocVectorEnv
 from tianshou.policy import PPOPolicy, ICMPolicy
 from tianshou.trainer import onpolicy_trainer
@@ -50,7 +54,6 @@ def main(args):
     
     # Set up logs
     now = datetime.datetime.now().strftime("%y%m%d-%H%M%S")
-    config.algo_name = "ppo"
     log_name = os.path.join(config.task, config.algo_name, now)
     log_path = os.path.join(config.log_path, log_name) 
     
@@ -64,11 +67,11 @@ def main(args):
     
     # Initialise the wandb logger
     logger = WandbLogger(
-        save_interval=1000,
-        #run_id=settings.get('run_id',None),
-        #name=settings.get('run_name',None),
-        project="RL_project", 
+        save_interval=1,
+        project="homer_dev", 
         entity="w266_wra",
+        train_interval=1,
+        update_interval=1,
         config=settings
         )
     writer = SummaryWriter(config.log_path)
@@ -87,6 +90,9 @@ def main(args):
             else:
                 settings.update({wandb_key: wandb_val})
             print(f"Sweep Argument Check: {wandb_key}: {settings[wandb_key]}")
+        # Update config. 
+        for k,v in settings.items():
+            setattr(config, k, v)
     
     policy = None
     test_collector = None
@@ -187,7 +193,7 @@ def train_agent(config, logger, log_path):
     if config.lr_decay:
         # decay learning rate to 0 linearly
         max_update_num = np.ceil(
-            config.steps_per_epoch / config.steps_per_collect
+            config.steps_per_epoch / config.episode_length#config.steps_per_collect
             ) * config.n_max_epochs
         lr_scheduler = LambdaLR(
             optim, lr_lambda=lambda epoch: 1 - epoch / max_update_num
@@ -262,10 +268,18 @@ def train_agent(config, logger, log_path):
     
     # replay buffer: `save_last_obs` and `stack_num` can be removed together
     # when you have enough RAM
-    buffer = VectorReplayBuffer(
-        total_size=config.replay_buffer_collector,
-        buffer_num=len(train_envs)
-    )
+    if config.prioritized_replay_buffer:
+        buffer = PrioritizedVectorReplayBuffer(
+            config.replay_buffer_collector,
+            buffer_num=len(train_envs),
+            alpha=config.alpha,
+            beta=config.beta,
+        )
+    else:
+        buffer = VectorReplayBuffer(
+            total_size=config.replay_buffer_collector,
+            buffer_num=len(train_envs)
+        )
     print(f'Buffer Loaded with length {len(buffer)}')    
     train_collector = Collector(
         policy, 
@@ -291,7 +305,7 @@ def train_agent(config, logger, log_path):
     c_keys=['n/ep', 'n/st', 'rews', 'lens', 'rew', 'len', 'rew_std', 'len_std']
     print('Collector Stats')
     for key in c_keys:
-        print(f'Stat: {collector_output[key]}')
+        print(f'{key}: {collector_output[key]}')
 
     print("\nDone")
     def save_best_fn(policy):
@@ -301,17 +315,20 @@ def train_agent(config, logger, log_path):
 
     def save_checkpoint_fn(epoch, env_step, gradient_step):
         ckpt_path = os.path.join(log_path, f"checkpoint_{epoch}.pth")
-        torch.save(
-            {
-                "model": policy.state_dict(), 
-                "optim": optim.state_dict()
-            }, ckpt_path
-        )
+        torch.save({"model": policy.state_dict(), "optim": optim.state_dict()}, 
+                    ckpt_path)
         print(f"Checkpoint saved to {ckpt_path}")
-        buffer_path = os.path.join(log_path, f"train_buffer_{epoch}.pkl")
-        pickle.dump(train_collector.buffer, open(buffer_path, "wb"))
         return ckpt_path
     
+    b1 = config.steps_per_collect == None
+    b2 = config.episode_per_collect == None
+    if b1 != b2:
+        pass
+    else:
+        raise Exception (
+            "Both steps_per_collect or episode_per_collect may not be set, set one to 'null'. "
+        )
+
     print("Running training")
     # see https://tianshou.readthedocs.io/en/master/api/tianshou.trainer.html
     result = onpolicy_trainer(
@@ -324,6 +341,7 @@ def train_agent(config, logger, log_path):
         episode_per_test=config.test_num,
         batch_size=config.batch_size,
         step_per_collect= config.steps_per_collect,
+        episode_per_collect=config.episode_per_collect,
         stop_fn=lambda mean_reward: mean_reward >= config.reward_stop,
         logger=logger,
         verbose=True,
@@ -338,7 +356,7 @@ def train_agent(config, logger, log_path):
 def do_eval(config, policy, test_collector):
     
     # Create test envs
-    test_envs, device_list = load_homer_env(config, 'validation')
+    test_envs, device_list = load_homer_env(config, 'test')
     print("Loaded test environments")
     
     # Load test collector with new test envs. 
@@ -388,13 +406,8 @@ def load_homer_env(config, data_subset, example=False):
 
     file_loader = DataLoader(config, data_subset)
     
-    # If test, we need to supply the save data
-    #if data_subset == 'test' and config.save_test_data:
     history = config.save_test_data
     result_path = config.result_path 
-    #else: #Don't save. 
-    #    history = False
-    #    result_path = ""
 
     if config.pricing_env == 'dummy':
         device_list = ['dummy' for _ in range(config.n_dummy_envs)]
@@ -420,29 +433,36 @@ def load_homer_env(config, data_subset, example=False):
                     save_path=result_path) 
                 for i in range(config.n_dummy_envs)]
             )
-    elif config.pricing_env == 'simple':
+    
+    elif config.pricing_env == 'debug' or 'simple':
         device_list = file_loader.device_list
         if example:
             # Load a single example to get env dimensions.
             envs =  HomerEnv(
-                data=file_loader.load_device(device_list[0]), 
+                data=file_loader._load_device(device_list[0]), 
                 start_soc=config.start_soc, 
                 discrete=config.discrete_env,
                 charge_rate=config.charge_rate,
-                action_intervals=config.action_intervals
+                action_intervals=config.action_intervals,
+                episode_length=config.episode_length,
             ) 
         else:
             n_devices = file_loader.n_devices
             env_list = [
                 lambda i=i: HomerEnv(
-                    data=file_loader.load_device(device_list[i], 
-                                                 truncate=config.truncate, 
-                                                 max_days=config.n_days,
-                                                 val_offset=config.val_offset), 
+                    data=file_loader._load_device(device_list[i], 
+                                                 val_offset=config.val_offset,
+                                                 n_days_train=config.n_days_train,
+                                                 n_days_val=config.n_days_val,
+                                                 n_days_test=config.n_days_val), 
                     start_soc=config.start_soc, 
                     discrete=config.discrete_env,
                     charge_rate=config.charge_rate,
                     action_intervals=config.action_intervals,
+                    exportable=config.exportable,
+                    importable=config.importable,
+                    benchmarks=config.benchmarks,
+                    episode_length=config.episode_length,
                     save_history=history,
                     save_path=result_path,
                     device_id=device_list[i]

@@ -1,0 +1,40 @@
+program: dqn_experiment_v1.py
+command:
+  - ${env}
+  - python
+  - ${program}
+  - "--file"
+  - "config/settings_dqn.json"
+  - "--sweep"
+method: bayes
+metric:
+  goal: maximize
+  name: test/reward
+parameters:
+  action_intervals:
+    values: [1, 2, 5, 10]
+  lr_optimizer:
+    distribution: uniform
+    max: 0.0005
+    min: 0.000005
+  n_hidden_layers:
+    distribution: int_uniform
+    max: 4
+    min: 2
+  replay_buffer_collector:
+    values: [500000, 1000000]
+  hidden_layer_dims:
+    values: [32, 64, 128]
+  repeat_per_collector:
+    distribution: int_uniform
+    max: 10
+    min: 2
+  n_est_steps:
+    distribution: int_uniform
+    max: 288
+    min: 12
+  steps_per_collect:
+    distribution: int_uniform
+    max: 288
+    min: 12
+  

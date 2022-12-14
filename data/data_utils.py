@@ -1,5 +1,6 @@
 import pandas as pd
 import os
+import numpy as np
 
 class DataLoader():
     """
@@ -18,14 +19,17 @@ class DataLoader():
         self.subset = data_subset
         self.dataset_type = config.pricing_env
         self.path = os.path.dirname(os.getcwd())
+        self.episodes = False if config.episode_length == 0 else True
+        self.train_is_val = config.train_is_val
         self.load_data(config)
+        self.debug = True if self.dataset_type == 'debug' else False
 
     def load_data(self, config):
 
         if config.pricing_env == 'dummy':
             return self.load_dummy_data()
             
-        elif config.pricing_env == 'simple':   
+        elif config.pricing_env in ['debug','simple','complex']:   
             self.device_list = self.load_device_list(self)
             if (config.max_devices <= len(self.device_list) and 
                 config.max_devices > 0):
@@ -34,18 +38,17 @@ class DataLoader():
                 print('Invalid input, defaulting to number of found devices')
                 self.n_devices = len(self.device_list)
             print(f"Found {self.n_devices} devices")
-        
-        elif config.pricing_env == 'complex':
-            print("Complex Environment not implemented yet.")
-            raise NotImplementedError
 
     def load_device_list(self, config):
-        device_dir = self.path+f"/data/{self.dataset_type}_pricing/device_list.csv"
+        if self.dataset_type == 'debug':
+            device_dir = self.path+f"/data/debug/device_list.csv"
+        else:
+            device_dir = self.path+f"/data/{self.dataset_type}_pricing/device_list.csv"
         try:
+            print(device_dir)
             device_list = pd.read_csv(device_dir)['device_id'].tolist()
         except:
             print("Could not load device list")
-        
         return device_list
         
     
@@ -62,14 +65,17 @@ class DataLoader():
         # Data directory as the train set. 
         was_valid = False
         offset_validation = None
-        if self.subset == "validation":
+        if self.subset == "validation" and not self.debug:
             was_valid = True
             offset_validation = val_offset * 12 * 24
             self.subset = "train"
 
         # Load file
-        data_dir = self.path+f"/data/{self.dataset_type}_pricing/"+self.subset+"/"
-        fname = f"{device}_simple_{self.subset}.parquet"
+        if self.debug:
+            data_dir = self.path+f"/data/{self.dataset_type}/"+self.subset+"/"
+        else:
+            data_dir = self.path+f"/data/{self.dataset_type}_pricing/"+self.subset+"/"
+        fname = f"{device}_{self.dataset_type}_{self.subset}.parquet"
         data = pd.read_parquet(data_dir+fname).fillna(0)
         
         # Truncate the dataset 
@@ -84,7 +90,50 @@ class DataLoader():
         # Offset the validation set. 
         if offset_validation is not None:
             # offset the first few values to step the dataset forward in time.
-            data = data.loc[offset_validation:offset_validation+2016,].copy()
+            data = data.loc[offset_validation:offset_validation*2,].copy()
+        
+        print(f"loaded {len(data)} steps from {fname}")
+        return data
+    
+    def _load_device(self, device, val_offset=0,
+                    n_days_train=-1, n_days_val=-1, n_days_test=-1):
+        """
+        Loads the data for a particular device assuming that device has it's own
+        file according to format:
+        <device_name>_simple_<subset>.parquet
+        returns a data frame 
+        """
+        # Load file
+
+        if self.debug:
+            data_dir = self.path+f"/data/{self.dataset_type}/"+self.subset+"/"
+            fname = f"{device}_{self.dataset_type}_{self.subset}.parquet"
+        else:
+            if self.train_is_val and self.subset == 'validation':
+                data_dir = self.path+f"/data/{self.dataset_type}_pricing/train/"
+                fname = f"{device}_{self.dataset_type}_train.parquet"
+            else:
+                data_dir = self.path+f"/data/{self.dataset_type}_pricing/"+self.subset+"/"
+                fname = f"{device}_{self.dataset_type}_{self.subset}.parquet"
+        
+        data = pd.read_parquet(data_dir+fname).fillna(0)
+                
+        if self.subset == 'train':
+            n = n_days_train * 288
+        elif self.subset == 'validation':
+            n = (n_days_val + val_offset) * 288
+            n = abs(n) * -1 if n_days_val == -1 else abs(n)
+        elif self.subset == 'test':
+            n = n_days_test * 288
+        # Truncate the dataset       
+        if n <= len(data) and n > 0:
+            if self.subset == 'train' or self.subset == 'test':
+                data = data.head(n)
+            else:
+                data = data.tail(n).loc[val_offset:,].copy()
+        else:
+            if self.subset == 'validation':
+                data = data.loc[val_offset:,].copy()
         
         print(f"loaded {len(data)} steps from {fname}")
         return data

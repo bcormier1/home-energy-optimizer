@@ -8,6 +8,9 @@ project_ve
 .ipynb_checkpoints/
 *.pyc
 *.DS_Store
+data/complex_pricing/train
+data/complex_pricing/test
+data/complex_pricing/original
 data/simple_pricing/train
 data/simple_pricing/test
 data/simple_pricing/compiled_data_simpleprice.parquet
@@ -30,3 +33,5 @@ logs/
 experiments/wandb/
 notebooks/log/*
 /data/data_simple/
+/data/debug
+/wandb

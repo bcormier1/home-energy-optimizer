@@ -96,19 +96,25 @@ class battery:
         self.previous_trip_count = 0
 
         # Set starting capacity.
-        if self.start_soc == 'full':
-            self.avl_energy=capacity * 1
+        if isinstance(self.start_soc, float):
+            if self.start_soc < 0 or self.start_soc > 1:
+                raise ValueError("start_soc must be between 0 and 1!")
+            self.avl_energy=capacity * self.start_soc
             self.soc = self.avl_energy / self.capacity
-        elif self.start_soc == 'empty':
-            self.avl_energy=capacity * 0
-            self.soc = self.avl_energy / self.capacity
-        elif self.start_soc == 'random':
-            self.avl_energy=capacity * np.random.random_sample()
-            self.soc = self.avl_energy / self.capacity
-        elif self.start_soc == 'half':
-            self.avl_energy=capacity * 0.5
-            self.soc = self.avl_energy / self.capacity
-        
+        else:
+            if self.start_soc == 'full':
+                self.avl_energy=capacity * 1
+                self.soc = self.avl_energy / self.capacity
+            elif self.start_soc == 'empty':
+                self.avl_energy=capacity * 0
+                self.soc = self.avl_energy / self.capacity
+            elif self.start_soc == 'random':
+                self.avl_energy=capacity * np.random.random_sample()
+                self.soc = self.avl_energy / self.capacity
+            elif self.start_soc == 'half':
+                self.avl_energy=capacity * 0.5
+                self.soc = self.avl_energy / self.capacity
+            
         # Assume same rate for charge and discharge. 
         self.discharge_loss = round_trip_efficiency ** 0.5
         self.charge_loss = round_trip_efficiency ** 0.5
@@ -425,8 +431,7 @@ class battery:
                 # the max discharge/current capacity of our battery
                 discharge_limit = - min(max_batt_supply, abs(net_energy))
         else:
-            print(net_energy)
-            raise Exception
+            raise Exception(f'Error on Net Energy: {net_energy}')
         # Return discharge and charge bounds. 
         self.battery_limits = (discharge_limit, charge_limit)
         return self.battery_limits

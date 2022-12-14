@@ -7,7 +7,6 @@ import argparse
 import torch
 import datetime
 import wandb
-import pickle
 
 #set working dir and path. 
 parent_dir = os.getcwd()
@@ -27,7 +26,11 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.tensorboard import SummaryWriter
 
 from tianshou.utils import WandbLogger
-from tianshou.data import Collector, VectorReplayBuffer
+from tianshou.data import (
+    Collector, 
+    VectorReplayBuffer, 
+    PrioritizedVectorReplayBuffer
+)
 from tianshou.env import SubprocVectorEnv
 from tianshou.policy import RainbowPolicy, DQNPolicy
 from tianshou.trainer import offpolicy_trainer
@@ -50,7 +53,7 @@ def main(args):
     log_name = os.path.join(config.task, config.algo_name, now)
     log_path = os.path.join(config.log_path, log_name) 
     
-    # Set up directoriesfor logging
+    # Set up directories for logging
     exists = os.path.exists(log_path)
     if not exists:
         os.makedirs(log_path)
@@ -60,11 +63,11 @@ def main(args):
     
     # Initialise the wandb logger
     logger = WandbLogger(
-        save_interval=1000,
-        #run_id=settings.get('run_id',None),
-        #name=settings.get('run_name',None),
-        project="RL_project", 
+        save_interval=1,
+        project="homer_dev", 
         entity="w266_wra",
+        train_interval=1,
+        update_interval=1,
         config=settings
         )
     writer = SummaryWriter(config.log_path)
@@ -83,6 +86,9 @@ def main(args):
             else:
                 settings.update({wandb_key: wandb_val})
             print(f"Sweep Argument Check: {wandb_key}: {settings[wandb_key]}")
+        # Update config. 
+        for k,v in settings.items():
+            setattr(config, k, v)
     
     policy = None
     test_collector = None
@@ -97,6 +103,7 @@ def main(args):
     if config.do_eval:
         # Do eval
         if policy is None or test_collector is None:
+            # Load policy and test_collector
             print('No Policy or Collector loaded! Skipping evaluation')
         else:
             print('Running evaluation')
@@ -176,7 +183,8 @@ def train_agent(config, logger, log_path):
             device=device
         )
     else:
-        raise Exception(f"Only 'dqn' and 'rainbow' algorithms supported, received {config.algo_name}")
+        raise Exception(f"Only 'dqn' and 'rainbow' algorithms supported,"
+                        f"received {config.algo_name}")
     
     print(f"Environment Action space: {env.action_space}")
     print(f"Environment Action shape: {action_shape}")
@@ -230,10 +238,20 @@ def train_agent(config, logger, log_path):
     
     # replay buffer: `save_last_obs` and `stack_num` can be removed together
     # when you have enough RAM
-    buffer = VectorReplayBuffer(
-        config.replay_buffer_collector,
-        buffer_num=len(train_envs)
-    )
+    if config.prioritized_replay_buffer:
+        buffer = PrioritizedVectorReplayBuffer(
+            config.replay_buffer_collector,
+            buffer_num=len(train_envs),
+            alpha=config.alpha,
+            beta=config.beta,
+            stack_num=config.frames_stack
+        )
+    else:
+        buffer = VectorReplayBuffer(
+            config.replay_buffer_collector,
+            buffer_num=len(train_envs),
+            stack_num=config.frames_stack
+        )
     print('Buffer Loaded')    
     train_collector = Collector(
         policy, 
@@ -266,8 +284,7 @@ def train_agent(config, logger, log_path):
             }, ckpt_path
         )
         print(f"Checkpoint saved to {ckpt_path}")
-        buffer_path = os.path.join(log_path, f"train_buffer_{epoch}.pkl")
-        pickle.dump(train_collector.buffer, open(buffer_path, "wb"))
+    
         return ckpt_path
     
     # Demo functions from:
@@ -275,7 +292,7 @@ def train_agent(config, logger, log_path):
     # else useL 
     def train_fn(epoch, env_step):
         # eps annnealing, just a demo
-        if env_step <= 10000:
+        if env_step <= 20000:
             policy.set_eps(config.eps_train)
         elif env_step <= 50000:
             eps = config.eps_train - (env_step - 10000) / \
@@ -300,7 +317,7 @@ def train_agent(config, logger, log_path):
         episode_per_test=config.test_num,
         batch_size=config.batch_size,
         step_per_collect= config.steps_per_collect,
-        update_per_step= 1 / config.steps_per_collect,
+        update_per_step= 1 / config.steps_per_collect,        
         train_fn=train_fn,
         test_fn=test_fn,
         stop_fn=lambda mean_reward: mean_reward >= config.reward_stop,
@@ -309,6 +326,7 @@ def train_agent(config, logger, log_path):
         save_best_fn=save_best_fn,
         resume_from_log=config.resume_id is not None,
         save_checkpoint_fn=save_checkpoint_fn,
+        test_in_train=True,
     )
     print("Training complete.\nSummary:\n")
     print(result)
@@ -317,7 +335,9 @@ def train_agent(config, logger, log_path):
 def do_eval(config, policy, test_collector):
     
     # Create test envs
-    test_envs, device_list = load_homer_env(config, 'validation')
+    setattr(config, 'episode_length', 0)
+    setattr(config, 'start_soc', 'full')
+    test_envs, device_list = load_homer_env(config, 'test')
     print("Loaded test environments")
     
     # Load test collector with new test envs. 
@@ -330,10 +350,11 @@ def do_eval(config, policy, test_collector):
     df_list = []
     for repeat in range(config.eval_n_repeats):
         # Load test collector with new test envs. 
+        policy.load_state_dict(torch.load(f'{config.result_path}'+'/best_policy.pth'))
         test_collector = Collector(
             policy, 
             test_envs,
-            exploration_noise=True
+            exploration_noise=False
         )
         policy.eval()
         result = test_collector.collect(
@@ -367,7 +388,6 @@ def load_homer_env(config, data_subset, example=False):
 
     file_loader = DataLoader(config, data_subset)
     
-    # If test, we need to supply the save data
     history = config.save_test_data
     result_path = config.result_path 
 
@@ -395,29 +415,36 @@ def load_homer_env(config, data_subset, example=False):
                     save_path=result_path) 
                 for i in range(config.n_dummy_envs)]
             )
-    elif config.pricing_env == 'simple':
+    
+    elif config.pricing_env == 'debug' or 'simple':
         device_list = file_loader.device_list
         if example:
             # Load a single example to get env dimensions.
             envs =  HomerEnv(
-                data=file_loader.load_device(device_list[0]), 
+                data=file_loader._load_device(device_list[0]), 
                 start_soc=config.start_soc, 
                 discrete=config.discrete_env,
                 charge_rate=config.charge_rate,
-                action_intervals=config.action_intervals
+                action_intervals=config.action_intervals,
+                episode_length=config.episode_length,
             ) 
         else:
             n_devices = file_loader.n_devices
             env_list = [
                 lambda i=i: HomerEnv(
-                    data=file_loader.load_device(device_list[i], 
-                                                 truncate=config.truncate, 
-                                                 max_days=config.n_days,
-                                                 val_offset=config.val_offset), 
+                    data=file_loader._load_device(device_list[i], 
+                                                 val_offset=config.val_offset,
+                                                 n_days_train=config.n_days_train,
+                                                 n_days_val=config.n_days_val,
+                                                 n_days_test=config.n_days_val), 
                     start_soc=config.start_soc, 
                     discrete=config.discrete_env,
                     charge_rate=config.charge_rate,
                     action_intervals=config.action_intervals,
+                    exportable=config.exportable,
+                    importable=config.importable,
+                    benchmarks=config.benchmarks,
+                    episode_length=config.episode_length,
                     save_history=history,
                     save_path=result_path,
                     device_id=device_list[i]
